@@ -1006,7 +1006,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             let focus_ring = focus_ring && Some(tile.window().id()) == active.as_ref();
 
             rv.extend(
-                tile.render(renderer, tile_pos, focus_ring, target)
+                tile.render(renderer, tile_pos, focus_ring, None, target)
                     .map(Into::into),
             );
         }

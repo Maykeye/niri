@@ -1520,6 +1520,11 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
+        let forced_alpha = self
+            .overview_progress
+            .as_ref()
+            .map(|x| 1.0 - 0.55 * x.value());
+
         self.workspaces_with_render_geo().map(move |(ws, geo)| {
             let map_ws_contents = move |elem: WorkspaceRenderElement<R>| {
                 let elem = CropRenderElement::from_element(elem, scale, crop_bounds)?;
@@ -1527,7 +1532,8 @@ impl<W: LayoutElement> Monitor<W> {
                 Some(elem)
             };
 
-            let (floating, scrolling) = ws.render_elements(renderer, target, focus_ring);
+            let (floating, scrolling) =
+                ws.render_elements(renderer, target, focus_ring, forced_alpha);
             let floating = floating.filter_map(map_ws_contents);
             let scrolling = scrolling.filter_map(map_ws_contents);
 

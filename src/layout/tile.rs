@@ -821,17 +821,20 @@ impl<W: LayoutElement> Tile<W> {
         renderer: &mut R,
         location: Point<f64, Logical>,
         focus_ring: bool,
+        override_alpha: Option<f64>,
         target: RenderTarget,
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render_inner");
 
         let scale = Scale::from(self.scale);
 
-        let win_alpha = if self.is_fullscreen || self.window.is_ignoring_opacity_window_rule() {
-            1.
-        } else {
-            self.window.rules().opacity.unwrap_or(1.).clamp(0., 1.)
-        };
+        let win_alpha = override_alpha.map(|x| x as f32).unwrap_or_else(|| {
+            if self.is_fullscreen || self.window.is_ignoring_opacity_window_rule() {
+                1.
+            } else {
+                self.window.rules().opacity.unwrap_or(1.).clamp(0., 1.)
+            }
+        });
 
         // This is here rather than in render_offset() because render_offset() is currently assumed
         // by the code to be temporary. So, for example, interactive move will try to "grab" the
@@ -983,6 +986,7 @@ impl<W: LayoutElement> Tile<W> {
                     LayoutElementRenderElement::Wayland(elem).into()
                 }
                 LayoutElementRenderElement::SolidColor(elem) => {
+                    println!("SOLID");
                     // In this branch we're rendering a blocked-out window with a solid
                     // color. We need to render it with a rounded corner shader even if
                     // clip_to_geometry is false, because in this case we're assuming that
@@ -1053,6 +1057,7 @@ impl<W: LayoutElement> Tile<W> {
         renderer: &mut R,
         location: Point<f64, Logical>,
         focus_ring: bool,
+        override_alpha: Option<f64>,
         target: RenderTarget,
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render");
@@ -1062,7 +1067,9 @@ impl<W: LayoutElement> Tile<W> {
         let tile_alpha = self
             .alpha_animation
             .as_ref()
-            .map_or(1., |alpha| alpha.anim.clamped_value()) as f32;
+            .map_or(override_alpha.unwrap_or(1.0), |alpha| {
+                alpha.anim.clamped_value()
+            }) as f32;
 
         let mut open_anim_elem = None;
         let mut alpha_anim_elem = None;
@@ -1072,7 +1079,13 @@ impl<W: LayoutElement> Tile<W> {
 
         if let Some(open) = &self.open_animation {
             let renderer = renderer.as_gles_renderer();
-            let elements = self.render_inner(renderer, Point::from((0., 0.)), focus_ring, target);
+            let elements = self.render_inner(
+                renderer,
+                Point::from((0., 0.)),
+                focus_ring,
+                override_alpha,
+                target,
+            );
             let elements = elements.collect::<Vec<TileRenderElement<_>>>();
             match open.render(
                 renderer,
@@ -1092,7 +1105,13 @@ impl<W: LayoutElement> Tile<W> {
             }
         } else if let Some(alpha) = &self.alpha_animation {
             let renderer = renderer.as_gles_renderer();
-            let elements = self.render_inner(renderer, Point::from((0., 0.)), focus_ring, target);
+            let elements = self.render_inner(
+                renderer,
+                Point::from((0., 0.)),
+                focus_ring,
+                override_alpha,
+                target,
+            );
             let elements = elements.collect::<Vec<TileRenderElement<_>>>();
             match alpha.offscreen.render(renderer, scale, &elements) {
                 Ok((elem, _sync, data)) => {
@@ -1109,7 +1128,8 @@ impl<W: LayoutElement> Tile<W> {
         }
 
         if open_anim_elem.is_none() && alpha_anim_elem.is_none() {
-            window_elems = Some(self.render_inner(renderer, location, focus_ring, target));
+            window_elems =
+                Some(self.render_inner(renderer, location, focus_ring, override_alpha, target));
         }
 
         open_anim_elem
@@ -1129,13 +1149,20 @@ impl<W: LayoutElement> Tile<W> {
     fn render_snapshot(&self, renderer: &mut GlesRenderer) -> TileRenderSnapshot {
         let _span = tracy_client::span!("Tile::render_snapshot");
 
-        let contents = self.render(renderer, Point::from((0., 0.)), false, RenderTarget::Output);
+        let contents = self.render(
+            renderer,
+            Point::from((0., 0.)),
+            false,
+            None,
+            RenderTarget::Output,
+        );
 
         // A bit of a hack to render blocked out as for screencast, but I think it's fine here.
         let blocked_out_contents = self.render(
             renderer,
             Point::from((0., 0.)),
             false,
+            None,
             RenderTarget::Screencast,
         );
 

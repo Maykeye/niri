@@ -1448,14 +1448,15 @@ impl<W: LayoutElement> Workspace<W> {
         renderer: &mut R,
         target: RenderTarget,
         focus_ring: bool,
+        override_alpha: Option<f64>,
     ) -> (
         impl Iterator<Item = WorkspaceRenderElement<R>>,
         impl Iterator<Item = WorkspaceRenderElement<R>>,
     ) {
         let scrolling_focus_ring = focus_ring && !self.floating_is_active();
-        let scrolling = self
-            .scrolling
-            .render_elements(renderer, target, scrolling_focus_ring);
+        let scrolling =
+            self.scrolling
+                .render_elements(renderer, target, scrolling_focus_ring, override_alpha);
         let scrolling = scrolling.into_iter().map(WorkspaceRenderElement::from);
 
         let floating_focus_ring = focus_ring && self.floating_is_active();

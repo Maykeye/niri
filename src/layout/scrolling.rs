@@ -2792,6 +2792,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         renderer: &mut R,
         target: RenderTarget,
         focus_ring: bool,
+        override_alpha: Option<f64>,
     ) -> Vec<ScrollingSpaceRenderElement<R>> {
         let mut rv = vec![];
 
@@ -2846,7 +2847,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 }
 
                 rv.extend(
-                    tile.render(renderer, tile_pos, focus_ring, target)
+                    tile.render(renderer, tile_pos, focus_ring, override_alpha, target)
                         .map(Into::into),
                 );
             }

@@ -2824,11 +2824,10 @@ impl Niri {
             .unwrap_or(config.layout.background_color)
             .to_array_unpremul();
 
-        let mut backdrop_color = c
+        let backdrop_color = c
             .and_then(|c| c.backdrop_color)
             .unwrap_or(config.overview.backdrop_color)
             .to_array_unpremul();
-        backdrop_color[3] = 1.;
 
         // FIXME: fix winit damage on other transforms.
         if name.connector == "winit" {
