@@ -261,6 +261,29 @@ impl OverviewProgress {
             OverviewProgress::Value(v) => *v,
         }
     }
+
+    pub fn is_decreasing(&self) -> bool {
+        if let OverviewProgress::Animation(anim) = &self {
+            return anim.from() > anim.to();
+        } else {
+            false
+        }
+    }
+
+    pub fn ratio(&self) -> f64 {
+        match self {
+            OverviewProgress::Animation(animation) => {
+                let progress = animation.clamped_value() - animation.from();
+                let delta = animation.to() - animation.from();
+                if delta.abs() < 0.001 {
+                    1.0
+                } else {
+                    progress / delta
+                }
+            }
+            OverviewProgress::Value(_) => 1.0,
+        }
+    }
 }
 
 impl From<&super::OverviewProgress> for OverviewProgress {
@@ -1520,10 +1543,14 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        let forced_alpha = self
-            .overview_progress
-            .as_ref()
-            .map(|x| 1.0 - 0.55 * x.value());
+        let forced_alpha = self.overview_progress.as_ref().map(|x| {
+            let t = x.ratio();
+            if x.is_decreasing() {
+                t + (1.0 - t) * self.options.overview_alpha
+            } else {
+                (1.0 - t) + t * self.options.overview_alpha
+            }
+        });
 
         self.workspaces_with_render_geo().map(move |(ws, geo)| {
             let map_ws_contents = move |elem: WorkspaceRenderElement<R>| {

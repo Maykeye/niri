@@ -338,6 +338,7 @@ enum MonitorSet<W: LayoutElement> {
 pub struct Options {
     /// Padding around windows in logical pixels.
     pub gaps: f64,
+    pub overview_alpha: f64,
     /// Extra padding around the working area in logical pixels.
     pub struts: Struts,
     pub focus_ring: niri_config::FocusRing,
@@ -368,6 +369,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             gaps: 16.,
+            overview_alpha: 1.0,
             struts: Default::default(),
             focus_ring: Default::default(),
             border: Default::default(),
@@ -643,6 +645,7 @@ impl Options {
 
         Self {
             gaps: layout.gaps.0,
+            overview_alpha: layout.overview_alpha,
             struts: layout.struts,
             focus_ring: layout.focus_ring,
             border: layout.border,

@@ -541,6 +541,8 @@ pub struct Layout {
     pub default_column_display: ColumnDisplay,
     #[knuffel(child, unwrap(argument), default = Self::default().gaps)]
     pub gaps: FloatOrInt<0, 65535>,
+    #[knuffel(child, unwrap(argument), default = Self::default().overview_alpha)]
+    pub overview_alpha: f64,
     #[knuffel(child, default)]
     pub struts: Struts,
     #[knuffel(child, default = DEFAULT_BACKGROUND_COLOR)]
@@ -565,6 +567,7 @@ impl Default for Layout {
             struts: Default::default(),
             preset_window_heights: Default::default(),
             background_color: DEFAULT_BACKGROUND_COLOR,
+            overview_alpha: 1.0,
         }
     }
 }
