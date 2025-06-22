@@ -400,7 +400,18 @@ impl State {
                     this.niri.screenshot_ui.set_space_down(pressed);
                 }
 
-                let bindings = &this.niri.config.borrow().binds;
+                // FIXME: VERY DIRTY HACK THAT IGNORES EVERYTHING AND JUST ASSUMES OVERVIEW IS THE
+                // FIXME  FIRST KEYBINDING GROUP
+                let named_binds = &this.niri.config.borrow().named_binds;
+                let overview_binds = if this.niri.keyboard_focus.is_overview() && pressed {
+                    named_binds.0.get(0).map(|x| &x.binds)
+                } else {
+                    None
+                };
+
+                let normal_binds = &this.niri.config.borrow().binds;
+
+                let bindings = overview_binds.unwrap_or_else(|| normal_binds);
                 let res = should_intercept_key(
                     &mut this.niri.suppressed_keys,
                     bindings,
@@ -414,17 +425,6 @@ impl State {
                     this.niri.config.borrow().input.disable_power_key_handling,
                     is_inhibiting_shortcuts,
                 );
-
-                if matches!(res, FilterResult::Forward) {
-                    // If we didn't find any bind, try other hardcoded keys.
-                    if this.niri.keyboard_focus.is_overview() && pressed {
-                        if let Some(bind) = raw.and_then(|raw| hardcoded_overview_bind(raw, *mods))
-                        {
-                            this.niri.suppressed_keys.insert(key_code);
-                            return FilterResult::Intercept(Some(bind));
-                        }
-                    }
-                }
 
                 res
             },
@@ -4214,6 +4214,7 @@ fn allowed_during_screenshot(action: &Action) -> bool {
     )
 }
 
+/* FIXME To be removed. Leave it as is for now to have less merge conflicts
 fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
     let mods = modifiers_from_state(mods);
     if !mods.is_empty() {
@@ -4248,6 +4249,7 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
         hotkey_overlay_title: None,
     })
 }
+*/
 
 pub fn apply_libinput_settings(config: &niri_config::Input, device: &mut input::Device) {
     // According to Mutter code, this setting is specific to touchpads.

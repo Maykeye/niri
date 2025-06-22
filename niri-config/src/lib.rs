@@ -79,6 +79,8 @@ pub struct Config {
     pub debug: DebugConfig,
     #[knuffel(children(name = "workspace"))]
     pub workspaces: Vec<Workspace>,
+    #[knuffel(children(name = "bind_group"))]
+    pub named_binds: NamedBinds,
 }
 
 #[derive(knuffel::Decode, Debug, Default, PartialEq)]
@@ -435,6 +437,17 @@ impl ModKey {
             ModKey::IsoLevel5Shift => Modifiers::ISO_LEVEL5_SHIFT,
         }
     }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct NamedBinds(pub Vec<NamedBindGroup>);
+
+#[derive(knuffel::Decode, Debug, PartialEq)]
+pub struct NamedBindGroup {
+    #[knuffel(argument)]
+    pub name: String,
+    #[knuffel(child, default)]
+    pub binds: Binds,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -2816,6 +2829,11 @@ fn expect_only_children<S>(
             "property",
             "no properties expected for this node",
         ))
+    }
+}
+impl FromIterator<NamedBindGroup> for NamedBinds {
+    fn from_iter<T: IntoIterator<Item = NamedBindGroup>>(iter: T) -> Self {
+        Self(Vec::from_iter(iter))
     }
 }
 
