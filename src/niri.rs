@@ -617,6 +617,7 @@ impl KeyboardFocus {
 pub struct State {
     pub backend: Backend,
     pub niri: Niri,
+    pub keybinding_group: Option<usize>,
 }
 
 impl State {
@@ -658,7 +659,11 @@ impl State {
         );
         backend.init(&mut niri);
 
-        let mut state = Self { backend, niri };
+        let mut state = Self {
+            backend,
+            niri,
+            keybinding_group: None,
+        };
 
         // Load the xkb_file config option if set by the user.
         state.load_xkb_file();
@@ -1297,6 +1302,9 @@ impl State {
         };
 
         self.niri.config_error_notification.hide();
+
+        // Reset active keybinding group
+        self.keybinding_group = None;
 
         // Find & orphan removed named workspaces.
         let mut removed_workspaces: Vec<String> = vec![];

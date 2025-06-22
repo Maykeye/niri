@@ -1929,6 +1929,7 @@ pub enum Action {
     ToggleOverview,
     OpenOverview,
     CloseOverview,
+    SetKeybindingGroup(#[knuffel(argument)] Option<String>),
     #[knuffel(skip)]
     ToggleWindowUrgent(u64),
     #[knuffel(skip)]
