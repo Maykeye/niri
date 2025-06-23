@@ -400,18 +400,15 @@ impl State {
                     this.niri.screenshot_ui.set_space_down(pressed);
                 }
 
-                // FIXME: VERY DIRTY HACK THAT IGNORES EVERYTHING AND JUST ASSUMES OVERVIEW IS THE
-                // FIXME  FIRST KEYBINDING GROUP
                 let named_binds = &this.niri.config.borrow().named_binds;
-                let overview_binds = if this.niri.keyboard_focus.is_overview() && pressed {
-                    named_binds.0.get(0).map(|x| &x.binds)
-                } else {
-                    None
-                };
+                let active_bind_group = this
+                    .keybinding_group
+                    .and_then(|group_idx| named_binds.0.get(group_idx))
+                    .map(|x| &x.binds);
 
                 let normal_binds = &this.niri.config.borrow().binds;
 
-                let bindings = overview_binds.unwrap_or_else(|| normal_binds);
+                let bindings = active_bind_group.unwrap_or_else(|| normal_binds);
                 let res = should_intercept_key(
                     &mut this.niri.suppressed_keys,
                     bindings,
@@ -495,6 +492,38 @@ impl State {
 
         self.niri.pointer_visibility = PointerVisibility::Hidden;
         self.niri.queue_redraw_all();
+    }
+
+    pub fn set_keybinding_group(&mut self, new_group: Option<&str>) {
+        let group_name = new_group.unwrap_or("");
+        // TODO: is emtpy name ok for usual group?
+        if group_name.is_empty() {
+            self.keybinding_group = None;
+        } else {
+            self.keybinding_group = self
+                .niri
+                .config
+                .borrow()
+                .named_binds
+                .0
+                .iter()
+                .position(|grp| grp.name == group_name);
+            if self.keybinding_group.is_none() {
+                // TODO: display popup? send event "tried to select nonexisting group?"
+                warn!("Can't find bind_group \"{group_name}\"");
+            }
+        }
+
+        self.ipc_keybinding_group_changed();
+    }
+    pub const OVERVIEW_BIND_GROUP: &'static str = "overview";
+    pub fn set_keybinding_group_from_overview_state(&mut self) {
+        let new_group = if self.niri.layout.is_overview_open() {
+            Some(Self::OVERVIEW_BIND_GROUP)
+        } else {
+            None
+        };
+        self.set_keybinding_group(new_group);
     }
 
     pub fn handle_bind(&mut self, bind: Bind) {
@@ -2056,15 +2085,18 @@ impl State {
             }
             Action::ToggleOverview => {
                 self.niri.layout.toggle_overview();
+                self.set_keybinding_group_from_overview_state();
                 self.niri.queue_redraw_all();
             }
             Action::OpenOverview => {
                 if self.niri.layout.open_overview() {
+                    self.set_keybinding_group_from_overview_state();
                     self.niri.queue_redraw_all();
                 }
             }
             Action::CloseOverview => {
                 if self.niri.layout.close_overview() {
+                    self.set_keybinding_group_from_overview_state();
                     self.niri.queue_redraw_all();
                 }
             }
@@ -2101,6 +2133,9 @@ impl State {
                     window.set_urgent(false);
                 }
                 self.niri.queue_redraw_all();
+            }
+            Action::SetKeybindingGroup(group_name) => {
+                self.set_keybinding_group(group_name.as_ref().map(|x| x.as_str()));
             }
         }
     }

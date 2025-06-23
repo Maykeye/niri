@@ -343,6 +343,23 @@ bind_group "overview" {
     }
 }
 
+bind_group "column-width" {
+    binds{
+        Return { set-keybinding-group ""; }
+        Escape { set-keybinding-group ""; }
+        "1" { set-column-width "10%"; }
+        "2" { set-column-width "20%"; }
+        "3" { set-column-width "30%"; }
+        "4" { set-column-width "40%"; }
+        "5" { set-column-width "50%"; }
+        "6" { set-column-width "60%"; }
+        "7" { set-column-width "70%"; }
+        "8" { set-column-width "80%"; }
+        "9" { set-column-width "90%"; }
+        "0" { set-column-width "100%"; }
+    }
+}
+
 binds {
     // Keys consist of modifiers separated by + signs, followed by an XKB key name
     // in the end. To find an XKB name for a particular key, you may use a program
@@ -550,6 +567,7 @@ binds {
     // set-column-width "100" will make the column occupy 200 physical screen pixels.
     Mod+Minus { set-column-width "-10%"; }
     Mod+Equal { set-column-width "+10%"; }
+    Mod+B { set-keybinding-group "column-width"; }
 
     // Finer height adjustments when in column with other windows.
     Mod+Shift+Minus { set-window-height "-10%"; }

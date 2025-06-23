@@ -539,6 +539,23 @@ impl State {
         server.send_event(event);
     }
 
+    pub fn ipc_keybinding_group_changed(&mut self) {
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
+
+        let name = self.keybinding_group.map(|idx| {
+            let binds = &self.niri.config.borrow().named_binds;
+            binds
+                .0
+                .get(idx)
+                .map(|grp| grp.name.clone())
+                .unwrap_or_else(|| format!("<invlaid group {idx}>"))
+        });
+        let event = Event::KeybindingGroupChanged { name };
+        server.send_event(event);
+    }
+
     pub fn ipc_refresh_layout(&mut self) {
         self.ipc_refresh_workspaces();
         self.ipc_refresh_windows();

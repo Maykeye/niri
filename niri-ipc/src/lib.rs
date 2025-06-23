@@ -1336,6 +1336,11 @@ pub enum Event {
         /// Index of the newly active layout.
         idx: u8,
     },
+    /// Keybinding group changed via set-keybinding-group or toggling overview mode
+    KeybindingGroupChanged {
+        /// Name of the current keybinding group, none if no group is active
+        name: Option<String>,
+    },
     /// The overview was opened or closed.
     OverviewOpenedOrClosed {
         /// The new state of the overview.
