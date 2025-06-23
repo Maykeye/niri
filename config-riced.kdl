@@ -335,11 +335,27 @@ bind_group "overview" {
         Down { focus-window-or-workspace-down; }
 
         // NEW NON BUILTIN BINDINGS - happy face 😼
-        K { spawn "konsole"; }
         Page_Up { focus-window-or-workspace-up; }
         Page_Down { focus-window-or-workspace-down; }
         KP_Prior { focus-window-or-workspace-up; }
         KP_Next { focus-window-or-workspace-down; }
+    }
+}
+
+bind_group "column-width" {
+    binds{
+        Return { set-keybinding-group ""; }
+        Escape { set-keybinding-group ""; }
+        "1" { set-column-width "10%"; }
+        "2" { set-column-width "20%"; }
+        "3" { set-column-width "30%"; }
+        "4" { set-column-width "40%"; }
+        "5" { set-column-width "50%"; }
+        "6" { set-column-width "60%"; }
+        "7" { set-column-width "70%"; }
+        "8" { set-column-width "80%"; }
+        "9" { set-column-width "90%"; }
+        "0" { set-column-width "100%"; }
     }
 }
 
@@ -517,16 +533,12 @@ binds {
     // Switches focus between the current and the previous workspace.
     // Mod+Tab { focus-workspace-previous; }
 
-    // The following binds move the focused window in and out of a column.
-    // If the window is alone, they will consume it into the nearby column to the side.
-    // If the window is already in a column, they will expel it out.
-    Mod+BracketLeft  { consume-or-expel-window-left; }
-    Mod+BracketRight { consume-or-expel-window-right; }
+    Mod+BracketLeft  { set-keybinding-group "column-width"; }
+    // TODO: column-height?
+    //Mod+BracketRight { consume-or-expel-window-right; }
 
-    // Consume one window from the right to the bottom of the focused column.
-    Mod+Comma  { consume-window-into-column; }
-    // Expel the bottom window from the focused column to the right.
-    Mod+Period { expel-window-from-column; }
+    Mod+Comma  { consume-or-expel-window-left; }
+    Mod+Period { consume-or-expel-window-right; }
 
     Mod+R { switch-preset-column-width; }
     Mod+Shift+R { switch-preset-window-height; }
