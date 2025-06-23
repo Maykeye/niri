@@ -413,6 +413,9 @@ pub fn handle_msg(msg: Msg, json: bool) -> anyhow::Result<()> {
                 }
 
                 match event {
+                    Event::KeybindingGroupChanged { name } => {
+                        println!("Keybinding group changed: {name:?}");
+                    }
                     Event::WorkspacesChanged { workspaces } => {
                         println!("Workspaces changed: {workspaces:?}");
                     }

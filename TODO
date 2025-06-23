@@ -3,6 +3,6 @@
 [x] Load them in main niri (done automatically)
 [x] Switch between them in State [set_keybinding_group]
 [ ] Add actions to switch between them in niri-ipc
-[ ] Add events to report switches via niri-ipc
+[x] Add events to report switches via niri-ipc
 [?] Hardcode overview to look for `overview` group
     [x] Use in overview in non brain rotted way (doing strcmp on each keypress is bad -- DONE strcmping on mode toggle)

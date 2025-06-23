@@ -509,11 +509,12 @@ impl State {
                 .iter()
                 .position(|grp| grp.name == group_name);
             if self.keybinding_group.is_none() {
-                // TODO: display popup?
+                // TODO: display popup? send event "tried to select nonexisting group?"
                 warn!("Can't find bind_group \"{group_name}\"");
             }
         }
-        // TODO: send IPC event like on_new_bind_group
+
+        self.ipc_keybinding_group_changed();
     }
     pub const OVERVIEW_BIND_GROUP: &'static str = "overview";
     pub fn set_keybinding_group_from_overview_state(&mut self) {
