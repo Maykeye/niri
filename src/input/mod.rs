@@ -2332,6 +2332,7 @@ impl State {
                 let inside_hot_corner = hot_corner.contains(pos_within_output);
                 if inside_hot_corner && !was_inside_hot_corner {
                     self.niri.layout.toggle_overview();
+                    self.set_keybinding_group_from_overview_state();
                 }
                 self.niri.pointer_inside_hot_corner = inside_hot_corner;
             }
@@ -2421,6 +2422,7 @@ impl State {
                 let inside_hot_corner = hot_corner.contains(pos_within_output);
                 if inside_hot_corner && !was_inside_hot_corner {
                     self.niri.layout.toggle_overview();
+                    self.set_keybinding_group_from_overview_state();
                 }
                 self.niri.pointer_inside_hot_corner = inside_hot_corner;
             }
@@ -2689,6 +2691,7 @@ impl State {
 
                 self.niri.layout.focus_output(&output);
                 self.niri.layout.toggle_overview_to_workspace(ws_idx);
+                self.set_keybinding_group_from_overview_state();
 
                 // FIXME: granular.
                 self.niri.queue_redraw_all();
@@ -2736,6 +2739,8 @@ impl State {
             }
         }
 
+        // TODO: sync in some better way to not grep every toggle_overview in existence
+        let old_overiew = self.niri.layout.is_overview_open();
         pointer.button(
             self,
             &ButtonEvent {
@@ -2745,6 +2750,11 @@ impl State {
                 time: event.time_msec(),
             },
         );
+
+        if old_overiew != self.niri.layout.is_overview_open() {
+            self.set_keybinding_group_from_overview_state();
+        }
+
         pointer.frame(self);
     }
 
@@ -3271,6 +3281,7 @@ impl State {
                                 drop(workspaces);
                                 self.niri.layout.focus_output(&output);
                                 self.niri.layout.toggle_overview_to_workspace(ws_idx);
+                                self.set_keybinding_group_from_overview_state();
                             }
                         }
 
@@ -3286,6 +3297,7 @@ impl State {
 
                         self.niri.layout.focus_output(&output);
                         self.niri.layout.toggle_overview_to_workspace(ws_idx);
+                        self.set_keybinding_group_from_overview_state();
 
                         // FIXME: granular.
                         self.niri.queue_redraw_all();
