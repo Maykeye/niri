@@ -61,4 +61,24 @@ def query_niri():
         on_niri_event(line)
 
 
+def already_exists():
+    """Very rough check if we are already running"""
+    ps = subprocess.Popen(
+        ["ps", "aux"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+        text=True,
+    )
+    assert ps.stdout is not None
+    ps.wait()
+    lines = ps.stdout.readlines()
+    lines = [line for line in lines if "/niri-mode.py" in line and "python" in line]
+    return lines != []
+
+
+if already_exists():
+    print("NIRI-MODE IS ALREADY RUNNING")
+    exit()
+
 query_niri()
