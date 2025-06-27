@@ -536,6 +536,8 @@ binds {
     Mod+BracketLeft  { set-keybinding-group "column-width"; }
     // TODO: column-height?
     //Mod+BracketRight { consume-or-expel-window-right; }
+    
+    Mod+Backslash { playback-keyboard-recording; }
 
     Mod+Comma  { consume-or-expel-window-left; }
     Mod+Period { consume-or-expel-window-right; }
