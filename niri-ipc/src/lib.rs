@@ -861,6 +861,17 @@ pub enum Action {
 
     /// Playback keyboard recording
     PlaybackKeyboardRecording,
+
+    /// Reset keyboard recording: clear queued keys and stop replay and record
+    ResetKeyboardRecording,
+
+    /// Extend keyboard recording
+    ExtendKeyboardRecording {
+        /// Space-separated sequence of keys to add, e.g.
+        /// "+50 +13 -13 -50" which can mean "press shift, then press 4, then release 4, then release shift"
+        #[cfg_attr(feature = "clap", arg())]
+        keys: String,
+    },
 }
 
 /// Change in window or column size.

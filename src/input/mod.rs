@@ -2140,14 +2140,48 @@ impl State {
                 self.niri.queue_redraw_all();
             }
             Action::StartKeyboardRecording => {
+                // FIXME: Security
                 self.niri.queued_keypresses.clear();
                 self.niri.record_keypresses = true;
             }
             Action::StopKeyboardRecording => {
+                // FIXME: Security
                 self.niri.record_keypresses = false;
             }
             Action::PlaybackKeyboardRecording => {
+                // FIXME: Security
                 self.niri.replay_keypresses = true;
+            }
+            Action::ResetKeyboardRecording => {
+                // FIXME: Security
+                self.niri.queued_keypresses.clear();
+                self.niri.replay_keypresses = false;
+                self.niri.record_keypresses = false;
+            }
+            Action::ExtendKeyboardRecording(keys) => {
+                // FIXME: Security
+                // FIXME: report error somehow other way?
+                let mut extending = vec![];
+                for arg in keys.split(" ") {
+                    let is_press = match arg.chars().nth(0) {
+                        Some('+') => true,
+                        Some('-') => false,
+                        _ => {
+                            error!("Invalid keypresses string: {keys}");
+                            return;
+                        }
+                    };
+
+                    let keycode = match arg[1..].parse::<u32>() {
+                        Ok(x) => x,
+                        Err(err) => {
+                            error!("Invalid keypresses string: {keys}: {err}");
+                            return;
+                        }
+                    };
+                    extending.push((is_press, keycode));
+                }
+                self.niri.queued_keypresses.extend(extending);
             }
         }
     }
