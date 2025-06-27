@@ -74,7 +74,8 @@ def already_exists():
     ps.wait()
     lines = ps.stdout.readlines()
     lines = [line for line in lines if "/niri-mode.py" in line and "python" in line]
-    return lines != []
+    # it should be 1 for us
+    return len(lines) > 1
 
 
 if already_exists():
