@@ -2139,6 +2139,16 @@ impl State {
                 }
                 self.niri.queue_redraw_all();
             }
+            Action::StartKeyboardRecording => {
+                self.niri.queued_keypresses.clear();
+                self.niri.record_keypresses = true;
+            }
+            Action::StopKeyboardRecording => {
+                self.niri.record_keypresses = false;
+            }
+            Action::PlaybackKeyboardRecording => {
+                self.niri.replay_keypresses = true;
+            }
         }
     }
 

@@ -6,8 +6,8 @@ use anyhow::{anyhow, bail, Context};
 use niri_config::OutputName;
 use niri_ipc::socket::Socket;
 use niri_ipc::{
-    Event, KeyboardLayouts, LogicalOutput, Mode, Output, OutputConfigChanged, Overview, Request,
-    Response, Transform, Window,
+    Event, KeyboardLayouts, KeyboardRecording, LogicalOutput, Mode, Output, OutputConfigChanged,
+    Overview, Request, Response, Transform, Window,
 };
 use serde_json::json;
 
@@ -34,6 +34,7 @@ pub fn handle_msg(msg: Msg, json: bool) -> anyhow::Result<()> {
         Msg::EventStream => Request::EventStream,
         Msg::RequestError => Request::ReturnError,
         Msg::OverviewState => Request::OverviewState,
+        Msg::KeyboardRecording => Request::KeyboardRecording,
     };
 
     let mut socket = Socket::connect().context("error connecting to the niri socket")?;
@@ -476,6 +477,25 @@ pub fn handle_msg(msg: Msg, json: bool) -> anyhow::Result<()> {
                 println!("Overview is open.");
             } else {
                 println!("Overview is closed.");
+            }
+        }
+        Msg::KeyboardRecording => {
+            let Response::KeyboardRecording(response) = response else {
+                bail!("unexpected response: expected KeyboardLayouts, got {response:?}");
+            };
+
+            if json {
+                let response =
+                    serde_json::to_string(&response).context("error formatting response")?;
+                println!("{response}");
+                return Ok(());
+            }
+
+            let KeyboardRecording { keys } = response;
+
+            println!("Keyboard recording:");
+            for key in keys.iter() {
+                println!("{key}");
             }
         }
     }
