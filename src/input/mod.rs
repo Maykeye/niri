@@ -359,6 +359,43 @@ impl State {
 
         let is_inhibiting_shortcuts = self.is_inhibiting_shortcuts();
 
+        // Record keypresses
+        if self.niri.record_keypresses {
+            self.niri
+                .queued_keypresses
+                .push((event.state() == KeyState::Pressed, event.key_code().raw()));
+        }
+
+        // Replay keypresses
+        if self.niri.replay_keypresses {
+            let mut keypresses = vec![];
+            std::mem::swap(&mut self.niri.queued_keypresses, &mut keypresses);
+            let mut serial = Some(serial);
+            for (pressed, key_code) in keypresses {
+                let cur_serial = serial.unwrap_or_else(|| SERIAL_COUNTER.next_serial());
+                serial = None;
+                let key_code = Keycode::new(key_code);
+                let state = if pressed {
+                    KeyState::Pressed
+                } else {
+                    KeyState::Released
+                };
+
+                self.niri.seat.get_keyboard().unwrap().input(
+                    self,
+                    key_code,
+                    state,
+                    cur_serial,
+                    time,
+                    |_this, _mods, _keysym| {
+                        return FilterResult::<()>::Forward;
+                    },
+                );
+            }
+            self.niri.queued_keypresses.clear();
+            self.niri.replay_keypresses = false;
+        }
+
         let Some(Some(bind)) = self.niri.seat.get_keyboard().unwrap().input(
             self,
             event.key_code(),
