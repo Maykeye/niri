@@ -392,6 +392,15 @@ pub struct Niri {
     /// Window ID for the "dynamic cast" special window for the xdp-gnome picker.
     #[cfg(feature = "xdp-gnome-screencast")]
     pub dynamic_cast_id_for_portal: MappedId,
+
+    /// Queued keypresses to send instead of the real keys
+    pub queued_keypresses: Vec<(bool, u32)>,
+
+    /// Should we record keypresses to the queue
+    pub record_keypresses: bool,
+
+    /// Should we replay queued_keypresses on next key press
+    pub replay_keypresses: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2628,6 +2637,10 @@ impl Niri {
 
             #[cfg(feature = "xdp-gnome-screencast")]
             dynamic_cast_id_for_portal: MappedId::next(),
+
+            queued_keypresses: vec![],
+            record_keypresses: false,
+            replay_keypresses: false,
         };
 
         niri.reset_pointer_inactivity_timer();

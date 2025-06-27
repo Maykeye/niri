@@ -359,6 +359,14 @@ impl State {
 
         let is_inhibiting_shortcuts = self.is_inhibiting_shortcuts();
 
+        // Record keypresses
+        if self.niri.record_keypresses {
+            self.niri
+                .queued_keypresses
+                .push((event.state() == KeyState::Pressed, event.key_code().raw()));
+        }
+
+        let mut current_mods = None;
         let Some(Some(bind)) = self.niri.seat.get_keyboard().unwrap().input(
             self,
             event.key_code(),
@@ -369,6 +377,7 @@ impl State {
                 let key_code = event.key_code();
                 let modified = keysym.modified_sym();
                 let raw = keysym.raw_latin_sym_or_raw_current_sym();
+                current_mods = Some(*mods);
 
                 if let Some(dialog) = &this.niri.exit_confirm_dialog {
                     if dialog.is_open() && pressed && raw == Some(Keysym::Return) {
@@ -426,6 +435,18 @@ impl State {
                 res
             },
         ) else {
+            if self.niri.replay_keypresses {
+                if let Some(mods) = current_mods {
+                    // Replay keypresses during release phase: we must make sure no significant
+                    // mods are pressed
+                    let skip = mods.logo | mods.ctrl | mods.alt | mods.shift;
+                    let skip = skip | mods.iso_level3_shift | mods.iso_level3_shift;
+                    if !skip {
+                        self.replay_keypresses(time);
+                    }
+                }
+            }
+
             return;
         };
 
@@ -436,6 +457,33 @@ impl State {
         self.handle_bind(bind.clone());
 
         self.start_key_repeat(bind);
+    }
+
+    fn replay_keypresses(&mut self, time: u32) {
+        let mut keypresses = vec![];
+        std::mem::swap(&mut self.niri.queued_keypresses, &mut keypresses);
+        for (pressed, key_code) in keypresses {
+            let serial = SERIAL_COUNTER.next_serial();
+            let key_code = Keycode::new(key_code);
+            let state = if pressed {
+                KeyState::Pressed
+            } else {
+                KeyState::Released
+            };
+
+            self.niri.seat.get_keyboard().unwrap().input(
+                self,
+                key_code,
+                state,
+                serial,
+                time,
+                |_this, _mods, _keysym| {
+                    return FilterResult::<()>::Forward;
+                },
+            );
+        }
+        self.niri.queued_keypresses.clear();
+        self.niri.replay_keypresses = false;
     }
 
     fn start_key_repeat(&mut self, bind: Bind) {
@@ -2136,6 +2184,50 @@ impl State {
             }
             Action::SetKeybindingGroup(group_name) => {
                 self.set_keybinding_group(group_name.as_ref().map(|x| x.as_str()));
+            }
+            Action::StartKeyboardRecording => {
+                // FIXME: Security
+                self.niri.queued_keypresses.clear();
+                self.niri.record_keypresses = true;
+            }
+            Action::StopKeyboardRecording => {
+                // FIXME: Security
+                self.niri.record_keypresses = false;
+            }
+            Action::PlaybackKeyboardRecording => {
+                // FIXME: Security
+                self.niri.replay_keypresses = true;
+            }
+            Action::ResetKeyboardRecording => {
+                // FIXME: Security
+                self.niri.queued_keypresses.clear();
+                self.niri.replay_keypresses = false;
+                self.niri.record_keypresses = false;
+            }
+            Action::ExtendKeyboardRecording(keys) => {
+                // FIXME: Security
+                // FIXME: report error somehow other way?
+                let mut extending = vec![];
+                for arg in keys.split(" ") {
+                    let is_press = match arg.chars().nth(0) {
+                        Some('+') => true,
+                        Some('-') => false,
+                        _ => {
+                            error!("Invalid keypresses string: {keys}");
+                            return;
+                        }
+                    };
+
+                    let keycode = match arg[1..].parse::<u32>() {
+                        Ok(x) => x,
+                        Err(err) => {
+                            error!("Invalid keypresses string: {keys}: {err}");
+                            return;
+                        }
+                    };
+                    extending.push((is_press, keycode));
+                }
+                self.niri.queued_keypresses.extend(extending);
             }
         }
     }

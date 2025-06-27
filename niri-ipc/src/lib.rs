@@ -114,6 +114,8 @@ pub enum Request {
     EventStream,
     /// Respond with an error (for testing error handling).
     ReturnError,
+    /// Get the current keyboard recording
+    KeyboardRecording,
     /// Request information about the overview.
     OverviewState,
 }
@@ -160,6 +162,8 @@ pub enum Response {
     OutputConfigChanged(OutputConfigChanged),
     /// Information about the overview.
     OverviewState(Overview),
+    /// Information about recorded keypresses
+    KeyboardRecording(KeyboardRecording),
 }
 
 /// Overview information.
@@ -168,6 +172,14 @@ pub enum Response {
 pub struct Overview {
     /// Whether the overview is currently open.
     pub is_open: bool,
+}
+
+/// Recorded keypresses information
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct KeyboardRecording {
+    /// Which keys should be pressed. Bool - pressed state, u32 - keycode
+    pub keys: Vec<String>,
 }
 
 /// Color picked from the screen.
@@ -839,6 +851,26 @@ pub enum Action {
         /// Id of the window to unset urgent.
         #[cfg_attr(feature = "clap", arg(long))]
         id: u64,
+    },
+
+    /// Start keyboard recording
+    StartKeyboardRecording,
+
+    /// Stop keyboard recording
+    StopKeyboardRecording,
+
+    /// Playback keyboard recording
+    PlaybackKeyboardRecording,
+
+    /// Reset keyboard recording: clear queued keys and stop replay and record
+    ResetKeyboardRecording,
+
+    /// Extend keyboard recording
+    ExtendKeyboardRecording {
+        /// Space-separated sequence of keys to add, e.g.
+        /// "+50 +13 -13 -50" which can mean "press shift, then press 4, then release 4, then release shift"
+        #[cfg_attr(feature = "clap", arg())]
+        keys: String,
     },
 }
 
