@@ -504,8 +504,7 @@ binds {
     // Switches focus between the current and the previous workspace.
     // Mod+Tab { focus-workspace-previous; }
 
-    // TODO: column-height?
-    //Mod+BracketRight { consume-or-expel-window-right; }
+    Mod+Backslash { playback-keyboard-recording; }
 
     Mod+Comma  { consume-or-expel-window-left; }
     Mod+Period { consume-or-expel-window-right; }
@@ -593,6 +592,6 @@ environment {
 }
 
 
-spawn-at-startup "xwayland-satellite"
-spawn-at-startup "/home/fella/bin/setup-wm-session-wlr.sh"
+//spawn-at-startup "xwayland-satellite"
+//spawn-at-startup "/home/fella/bin/setup-wm-session-wlr.sh"
 
