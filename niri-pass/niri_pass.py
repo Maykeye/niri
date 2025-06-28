@@ -2,7 +2,7 @@
 import getpass
 import os
 import subprocess
-import itertools
+from prompt_toolkit import prompt
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 import tempfile
@@ -148,13 +148,13 @@ class Niri:
         return self.request("keyboard-recording")
 
 
-def ask_keystring(is_secret: bool, prompt: str):
+def ask_keystring(is_secret: bool, prompt_text: str):
     niri = Niri(niri_bin)
     niri.reset_keyboard_recording()
     if is_secret:
-        raw = getpass.getpass(prompt)
+        raw = getpass.getpass(prompt_text)
     else:
-        raw = input(prompt)
+        raw = prompt(prompt_text)
 
     encoded = encode_string(raw)
     return raw, encoded
@@ -297,7 +297,7 @@ def load(state: State):
 
 def quit(state: State):
     if state.changed:
-        confirmation = input(
+        confirmation = prompt(
             "There are unsaved changed. Are you sure you want to exit?\n"
             "Type `YES` (uppercase) to confirm: "
         )
@@ -484,7 +484,7 @@ def impl_undo_redo(
             format_entry_data("?", id, "<not found>", "<not found>", "<not found>")
         else:
             format_entry(history)
-    id_s = input(f"{desc} id: ")
+    id_s = prompt(f"{desc} id: ")
     if not id_s:
         print("Aborted\n")
         return
@@ -530,7 +530,7 @@ def delete(state: State, filter: str):
         print(f"Aborted: '{entry.name}'@{entry.id} is not active")
         return
     format_entry(entry)
-    confirm = input("Delete? (y/yes): ")
+    confirm = prompt("Delete? (y/yes): ")
     if confirm.lower() not in ["y", "yes"]:
         print("Cancelled")
         return
@@ -548,7 +548,7 @@ def undelete(state: State, filter: str):
         print(f"Aborted: '{entry.name}'@{entry.id} is active")
         return
     format_entry(entry)
-    confirm = input("Undelete? (y/yes): ")
+    confirm = prompt("Undelete? (y/yes): ")
     if confirm.lower() not in ["y", "yes"]:
         print("Cancelled")
         return
@@ -597,7 +597,7 @@ def main():
         init_key(state, None)
 
     while True:
-        raw_cmd = input("Command(`?` for help): ")
+        raw_cmd = prompt("Command(`?` for help): ")
         parts = raw_cmd.split(maxsplit=1)
         if not parts or not parts[0]:
             continue
