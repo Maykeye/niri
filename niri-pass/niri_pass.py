@@ -16,6 +16,7 @@ import json
 import shutil
 import datetime
 import copy
+from colorama import Fore, Style
 from niri_keymap import encode_string
 
 N_SALT = 16
@@ -425,7 +426,7 @@ def send_password(state: State, filter: str):
     if not entry:
         print(f"No unique entry found for '{filter}'")
         return
-    print(f"\nSending {entry.name} SECRET DATA")
+    print(f"\nSending {Style.BRIGHT}{Fore.RED}password{Style.RESET_ALL} {entry.name}")
     niri = Niri(niri_bin)
     niri.reset_keyboard_recording()
     niri.extend_keyboard_recording(entry.keycode)
@@ -442,7 +443,9 @@ def send_username(state: State, filter: str):
     if not entry.user_name_keycode:
         print(f"No username found for '{entry.name}'")
         return
-    print(f"\nSending {entry.name} USER NAME")
+    print(
+        f"\nSending {Style.BRIGHT}{Fore.WHITE}username{Style.RESET_ALL} for {entry.name}"
+    )
     niri = Niri(niri_bin)
     niri.reset_keyboard_recording()
     niri.extend_keyboard_recording(entry.user_name_keycode)
