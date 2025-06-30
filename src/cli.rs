@@ -34,7 +34,7 @@ pub struct Cli {
     pub subcommand: Option<Sub>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum Sub {
     /// Communicate with the running niri instance.
     Msg {
@@ -59,7 +59,7 @@ pub enum Sub {
     Completions { shell: Shell },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum Msg {
     /// List connected outputs.
     Outputs,
