@@ -4,6 +4,7 @@ import sys
 import os
 import time
 import subprocess
+from typing import Optional
 
 niri_bin = os.getenv("NIRI_BIN") or "niri"
 
@@ -12,13 +13,8 @@ class Niri:
     def __init__(self, niri_path) -> None:
         self.niri_path = niri_path
 
-    def run(self, args: list[str]):
-        p = subprocess.run(
-            args,
-            timeout=1,
-            capture_output=True,
-            text=True,
-        )
+    def run(self, args: list[str], stdin: Optional[str] = None):
+        p = subprocess.run(args, timeout=1, capture_output=True, text=True, input=stdin)
         if p.returncode != 0 or p.stderr:
             raise subprocess.SubprocessError(
                 f"Niri failed: return-code: {p.returncode}, stderr:{p.stderr}"
@@ -28,14 +24,11 @@ class Niri:
     def request(self, request: str):
         return self.run([self.niri_path, "msg", request])
 
-    def action(self, action: str, *args):
-        return self.run([self.niri_path, "msg", "action", action, *args])
-
     def get_keyboard_recording(self):
         return self.request("keyboard-recording")
 
-    def playback_once(self):
-        return self.action("playback-keyboard-recording-once")
+    def run_with_stdin(self, stdin: str):
+        return self.run([self.niri_path, "--stdin"], stdin=stdin)
 
 
 def main():
@@ -50,9 +43,9 @@ def main():
         raise ValueError(f"unexepcted output: `{recording[0]}`")
     recording = recording[1:]
     time.sleep(delay)
-    for _ in range(len(recording)):
-        niri.playback_once()
-        # Extra delay is received from spawning and toggling processes
+
+    stdin = "niri msg action playback-keyboard-recording-once\n" * len(recording)
+    niri.run_with_stdin(stdin)
 
 
 if __name__ == "__main__":
