@@ -862,6 +862,9 @@ pub enum Action {
     /// Playback keyboard recording
     PlaybackKeyboardRecording,
 
+    /// Playback keyboard recording, but only the first queued keycode
+    PlaybackKeyboardRecordingOnce,
+
     /// Reset keyboard recording: clear queued keys and stop replay and record
     ResetKeyboardRecording,
 
