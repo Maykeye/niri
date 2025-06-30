@@ -445,7 +445,7 @@ impl State {
                     let skip = mods.logo | mods.ctrl | mods.alt | mods.shift;
                     let skip = skip | mods.iso_level3_shift | mods.iso_level3_shift;
                     if !skip {
-                        self.replay_keypresses(time);
+                        self.replay_keypresses(time, false);
                     }
                 }
             }
@@ -462,30 +462,50 @@ impl State {
         self.start_key_repeat(bind);
     }
 
-    fn replay_keypresses(&mut self, time: u32) {
-        let mut keypresses = vec![];
-        std::mem::swap(&mut self.niri.queued_keypresses, &mut keypresses);
-        for (pressed, key_code) in keypresses {
-            let serial = SERIAL_COUNTER.next_serial();
-            let key_code = Keycode::new(key_code);
-            let state = if pressed {
-                KeyState::Pressed
-            } else {
-                KeyState::Released
-            };
+    fn send_keypress(&mut self, pressed: bool, key_code: u32, time: u32) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let key_code = Keycode::new(key_code);
+        let state = if pressed {
+            KeyState::Pressed
+        } else {
+            KeyState::Released
+        };
 
-            self.niri.seat.get_keyboard().unwrap().input(
-                self,
-                key_code,
-                state,
-                serial,
-                time,
-                |_this, _mods, _keysym| {
-                    return FilterResult::<()>::Forward;
-                },
-            );
+        self.niri.seat.get_keyboard().unwrap().input(
+            self,
+            key_code,
+            state,
+            serial,
+            time,
+            |_this, _mods, _keysym| {
+                return FilterResult::<()>::Forward;
+            },
+        );
+    }
+
+    fn replay_keypresses(&mut self, time: u32, first_only: bool) {
+        let mut time = if time != 0 {
+            time
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u32
+        };
+
+        if !first_only {
+            let mut keypresses = vec![];
+            std::mem::swap(&mut self.niri.queued_keypresses, &mut keypresses);
+            for (pressed, key_code) in keypresses {
+                time = time + 10;
+                self.send_keypress(pressed, key_code, time);
+            }
+        } else if !self.niri.queued_keypresses.is_empty() {
+            // TODO: vecdeque me?
+            let (pressed, key_code) = self.niri.queued_keypresses.remove(0);
+            self.send_keypress(pressed, key_code, time);
         }
-        self.niri.queued_keypresses.clear();
+
         self.niri.replay_keypresses = false;
     }
 
@@ -2162,6 +2182,11 @@ impl State {
             Action::PlaybackKeyboardRecording => {
                 // FIXME: Security
                 self.niri.replay_keypresses = true;
+            }
+            Action::PlaybackKeyboardRecordingOnce => {
+                // FIXME: Security
+                self.niri.replay_keypresses = true;
+                self.replay_keypresses(0, true);
             }
             Action::ResetKeyboardRecording => {
                 // FIXME: Security
