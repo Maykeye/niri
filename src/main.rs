@@ -3,7 +3,7 @@ extern crate tracing;
 
 use std::fmt::Write as _;
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -64,6 +64,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "running as a systemd service, but systemd support is compiled out. \
              Are you sure you did not forget to set `--features systemd`?"
         );
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("--stdin") {
+        for line in std::io::stdin().lock().lines() {
+            let line = line?;
+            // skip empty lines
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // parse
+            let cli = Cli::parse_from(line.split_whitespace());
+            if let Some(subcommand) = cli.subcommand {
+                match subcommand {
+                    Sub::Msg { msg, json } => {
+                        handle_msg(msg, json)?;
+                    }
+                    _ => {
+                        // TODO: return error
+                        warn!("in stdin only msg is supported, not {:?}", subcommand);
+                    }
+                }
+            }
+        }
+
+        return Ok(());
     }
 
     let cli = Cli::parse();
