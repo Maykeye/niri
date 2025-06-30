@@ -537,7 +537,10 @@ binds {
     // TODO: column-height?
     //Mod+BracketRight { consume-or-expel-window-right; }
     
-    Mod+Backslash { playback-keyboard-recording; }
+    // playback-keyboard-recording is too fast for many apps
+    // Mod+Backslash { playback-keyboard-recording; }
+    // TODO: mode where 1,2,3,4... set timeout
+    Mod+Backslash { spawn "~/bin/niri-kbd-xpaste.py" "2"; }
 
     Mod+Comma  { consume-or-expel-window-left; }
     Mod+Period { consume-or-expel-window-right; }
