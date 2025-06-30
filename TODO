@@ -1,9 +1,19 @@
+[ ] Add Documentation for forced-alpha branch and copy it to rice_combined
+[ ] Add Documentation for keyboard_named_binds and copy it to rice_combined
+[ ] Add Documentation for keycode-queue and copy it to rice_combined
+[ ] Add actions to switch between binding modes in niri-ipc
+    [ ] Add "password-countdown" modes with names "P3", "P2", "P1" and red background
+        [ ] When P(n) starts, it waits for 1 second and switches to P(n-1).
+        [ ] Instead of P0 `niri-kbd-xpaste.py` is launched, and then normal mode is activated
+        [ ] Each mode has only 1 binding: Escape. It resets keycode queue and returns to normal mode
+[?] Sync overview and switching state better
+    [?] Don't synch at all and extend niri-mode to switch the mode outside of the niri core
+        [ ] Add list-modes command
+            [ ] Use it to decide if overview mode should be used in niri-mode script
+[?] Hardcode overview to look for `overview` group
+    [x] Use in overview in non brain rotted way (doing strcmp on each keypress is bad -- DONE strcmping on mode toggle)
 [x] Edit config to support named binds group
     [?] probably K as keeping binds{} separate means we can have extra config values if needed
 [x] Load them in main niri (done automatically)
 [x] Switch between them in State [set_keybinding_group]
-[ ] Add actions to switch between them in niri-ipc
-[ ] Sync overview and switching state better
 [x] Add events to report switches via niri-ipc
-[?] Hardcode overview to look for `overview` group
-    [x] Use in overview in non brain rotted way (doing strcmp on each keypress is bad -- DONE strcmping on mode toggle)
