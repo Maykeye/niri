@@ -1922,6 +1922,7 @@ pub enum Action {
     SetWindowUrgent(u64),
     #[knuffel(skip)]
     UnsetWindowUrgent(u64),
+    ForceLidOpen,
 }
 
 impl From<niri_ipc::Action> for Action {

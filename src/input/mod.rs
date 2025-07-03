@@ -2102,6 +2102,9 @@ impl State {
                 }
                 self.niri.queue_redraw_all();
             }
+            Action::ForceLidOpen => {
+                self.force_lid_open();
+            }
         }
     }
 
@@ -3881,6 +3884,17 @@ impl State {
         if let Some(action) = action {
             self.do_action(action, true);
         }
+    }
+
+    fn force_lid_open(&mut self) {
+        if !self.niri.is_lid_closed {
+            debug!("force_lid_open: lid is already open");
+            return;
+        }
+        self.niri.is_lid_closed = false;
+        debug!("force_lid_open: turning lid open");
+        self.backend.on_output_config_changed(&mut self.niri);
+        debug!("force_lid_open: lid is now considered open");
     }
 }
 
