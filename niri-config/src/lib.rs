@@ -1945,6 +1945,7 @@ pub enum Action {
     PlaybackKeyboardRecordingOnce,
     ResetKeyboardRecording,
     ExtendKeyboardRecording(#[knuffel(argument)] String),
+    ForceLidOpen,
 }
 
 impl From<niri_ipc::Action> for Action {
