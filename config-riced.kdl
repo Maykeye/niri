@@ -541,6 +541,7 @@ binds {
     // Mod+Backslash { playback-keyboard-recording; }
     // TODO: mode where 1,2,3,4... set timeout
     Mod+Backslash { spawn "~/bin/niri-kbd-xpaste.py" "2"; }
+    Mod+Ctrl+KP_Enter  { force-lid-open; }
 
     Mod+Comma  { consume-or-expel-window-left; }
     Mod+Period { consume-or-expel-window-right; }
