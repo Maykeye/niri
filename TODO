@@ -1,3 +1,10 @@
+# Todo list
+
+## Niri-mode
+[ ] Fix: right now niri-mode.py can outlive the niri. When it happens, niri-mode scripts starts consuming CPU as crazy. It should quit.
+    [ ] Or make KISS workaround with emphasis on stupid: when the second niri-mode starts, it should find existing one and SIGKILL it
+
+## General
 [ ] Add Documentation for forced-alpha branch and copy it to rice_combined
 [ ] Add Documentation for keyboard_named_binds and copy it to rice_combined
 [ ] Add Documentation for keycode-queue and copy it to rice_combined
