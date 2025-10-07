@@ -65,6 +65,7 @@ fn simple() {
 }
 
 #[test]
+#[should_panic(expected = "Protocol error 3 on object xdg_surface")]
 fn dont_ack_initial_configure() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
@@ -80,19 +81,6 @@ fn dont_ack_initial_configure() {
     // Don't ack the configure.
     window.commit();
     f.double_roundtrip(id);
-
-    // FIXME: Technically this is a protocol violation but uh. Smithay currently doesn't check it,
-    // and I'm not sure if it can be done generically in Smithay (because a compositor may not use
-    // its rendering helpers). I might add a check in niri itself sometime; I'm just not sure if
-    // there might be clients that this could break.
-    let window = f.client(id).window(&surface);
-    assert_snapshot!(
-        window.format_recent_configures(),
-        @r"
-    size: 936 × 1048, bounds: 1888 × 1048, states: []
-    size: 936 × 1048, bounds: 1888 × 1048, states: [Activated]
-    "
-    );
 }
 
 #[derive(Clone, Copy)]
@@ -213,12 +201,30 @@ fn check_target_output_and_workspace(
 
     let mut config = String::from(
         r##"
+output "headless-2" {
+    layout {
+        border {
+            on
+        }
+    }
+}
+
 workspace "ws-1" {
     open-on-output "headless-1"
 }
 
 workspace "ws-2" {
     open-on-output "headless-2"
+
+    layout {
+        border {
+            width 10
+        }
+
+        default-column-width {
+            fixed 500
+        }
+    }
 }
 
 window-rule {
@@ -275,7 +281,7 @@ window-rule {{
 
     snapshot_desc.push(format!("config:{config}"));
 
-    let config = Config::parse("config.kdl", &config).unwrap();
+    let config = Config::parse_mem(&config).unwrap();
 
     let mut f = Fixture::with_config(config);
     f.add_output(1, (1280, 720));
@@ -568,7 +574,7 @@ layout {
 
     snapshot_desc.push(format!("config:{config}"));
 
-    let config = Config::parse("config.kdl", &config).unwrap();
+    let config = Config::parse_mem(&config).unwrap();
 
     let mut f = Fixture::with_config(config);
     f.add_output(1, (1280, 720));

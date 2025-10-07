@@ -1,7 +1,9 @@
 use core::f64;
 use std::rc::Rc;
 
+use niri_config::utils::MergeWith as _;
 use niri_config::{Color, CornerRadius, GradientInterpolation};
+use niri_ipc::WindowLayout;
 use smithay::backend::renderer::element::{Element, Kind};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
@@ -137,6 +139,13 @@ struct ResizeAnimation {
     size_from: Size<f64, Logical>,
     snapshot: LayoutElementRenderSnapshot,
     offscreen: OffscreenBuffer,
+    tile_size_from: Size<f64, Logical>,
+    // If the resize involved the fullscreen state at some point, this is the progress toward the
+    // fullscreen state. Used for things like fullscreen backdrop alpha.
+    //
+    // Note that this can be set even if this specific resize is between two non-fullscreen states,
+    // for example when issuing a new resize during an unfullscreen resize.
+    fullscreen_progress: Option<Animation>,
 }
 
 #[derive(Debug)]
@@ -166,18 +175,18 @@ impl<W: LayoutElement> Tile<W> {
         options: Rc<Options>,
     ) -> Self {
         let rules = window.rules();
-        let border_config = rules.border.resolve_against(options.border);
-        let focus_ring_config = rules.focus_ring.resolve_against(options.focus_ring.into());
-        let shadow_config = rules.shadow.resolve_against(options.shadow);
+        let border_config = options.layout.border.merged_with(&rules.border);
+        let focus_ring_config = options.layout.focus_ring.merged_with(&rules.focus_ring);
+        let shadow_config = options.layout.shadow.merged_with(&rules.shadow);
         let is_fullscreen = window.is_fullscreen();
 
         Self {
             window,
             border: FocusRing::new(border_config.into()),
-            focus_ring: FocusRing::new(focus_ring_config.into()),
+            focus_ring: FocusRing::new(focus_ring_config),
             shadow: Shadow::new(shadow_config),
             is_fullscreen,
-            fullscreen_backdrop: SolidColorBuffer::new(view_size, [0., 0., 0., 1.]),
+            fullscreen_backdrop: SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.]),
             unfullscreen_to_floating: false,
             floating_window_size: None,
             floating_pos: None,
@@ -205,10 +214,10 @@ impl<W: LayoutElement> Tile<W> {
         options: Rc<Options>,
     ) {
         // If preset widths or heights changed, clear our stored preset index.
-        if self.options.preset_column_widths != options.preset_column_widths {
+        if self.options.layout.preset_column_widths != options.layout.preset_column_widths {
             self.floating_preset_width_idx = None;
         }
-        if self.options.preset_window_heights != options.preset_window_heights {
+        if self.options.layout.preset_window_heights != options.layout.preset_window_heights {
             self.floating_preset_height_idx = None;
         }
 
@@ -218,18 +227,18 @@ impl<W: LayoutElement> Tile<W> {
 
         let rules = self.window.rules();
 
-        let border_config = rules.border.resolve_against(self.options.border);
+        let border_config = self.options.layout.border.merged_with(&rules.border);
         self.border.update_config(border_config.into());
 
-        let focus_ring_config = rules
+        let focus_ring_config = self
+            .options
+            .layout
             .focus_ring
-            .resolve_against(self.options.focus_ring.into());
-        self.focus_ring.update_config(focus_ring_config.into());
+            .merged_with(&rules.focus_ring);
+        self.focus_ring.update_config(focus_ring_config);
 
-        let shadow_config = rules.shadow.resolve_against(self.options.shadow);
+        let shadow_config = self.options.layout.shadow.merged_with(&rules.shadow);
         self.shadow.update_config(shadow_config);
-
-        self.fullscreen_backdrop.resize(view_size);
     }
 
     pub fn update_shaders(&mut self) {
@@ -239,28 +248,67 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn update_window(&mut self) {
+        let was_fullscreen = self.is_fullscreen;
         self.is_fullscreen = self.window.is_fullscreen();
 
         if let Some(animate_from) = self.window.take_animation_snapshot() {
-            let (size_from, offscreen) = if let Some(resize) = self.resize_animation.take() {
+            let params = if let Some(resize) = self.resize_animation.take() {
                 // Compute like in animated_window_size(), but using the snapshot geometry (since
                 // the current one is already overwritten).
                 let mut size = animate_from.size;
 
                 let val = resize.anim.value();
                 let size_from = resize.size_from;
+                let tile_size_from = resize.tile_size_from;
 
                 size.w = size_from.w + (size.w - size_from.w) * val;
                 size.h = size_from.h + (size.h - size_from.h) * val;
 
+                let mut tile_size = animate_from.size;
+                if was_fullscreen {
+                    tile_size.w = f64::max(tile_size.w, self.view_size.w);
+                    tile_size.h = f64::max(tile_size.h, self.view_size.h);
+                } else if !self.border.is_off() {
+                    let width = self.border.width();
+                    tile_size.w += width * 2.;
+                    tile_size.h += width * 2.;
+                }
+
+                tile_size.w = tile_size_from.w + (tile_size.w - tile_size_from.w) * val;
+                tile_size.h = tile_size_from.h + (tile_size.h - tile_size_from.h) * val;
+
+                let fullscreen_from = resize
+                    .fullscreen_progress
+                    .map(|anim| anim.clamped_value().clamp(0., 1.))
+                    .unwrap_or(if was_fullscreen { 1. } else { 0. });
+
                 // Also try to reuse the existing offscreen buffer if we have one.
-                (size, resize.offscreen)
+                (size, tile_size, fullscreen_from, resize.offscreen)
             } else {
-                (animate_from.size, OffscreenBuffer::default())
+                let size = animate_from.size;
+
+                // Compute like in tile_size().
+                let mut tile_size = size;
+                if was_fullscreen {
+                    tile_size.w = f64::max(tile_size.w, self.view_size.w);
+                    tile_size.h = f64::max(tile_size.h, self.view_size.h);
+                } else if !self.border.is_off() {
+                    let width = self.border.width();
+                    tile_size.w += width * 2.;
+                    tile_size.h += width * 2.;
+                }
+
+                let fullscreen_from = if was_fullscreen { 1. } else { 0. };
+
+                (size, tile_size, fullscreen_from, OffscreenBuffer::default())
             };
+            let (size_from, tile_size_from, fullscreen_from, offscreen) = params;
 
             let change = self.window.size().to_f64().to_point() - size_from.to_point();
             let change = f64::max(change.x.abs(), change.y.abs());
+            let tile_change = self.tile_size().to_f64().to_point() - tile_size_from.to_point();
+            let tile_change = f64::max(tile_change.x.abs(), tile_change.y.abs());
+            let change = f64::max(change, tile_change);
             if change > RESIZE_ANIMATION_THRESHOLD {
                 let anim = Animation::new(
                     self.clock.clone(),
@@ -269,11 +317,18 @@ impl<W: LayoutElement> Tile<W> {
                     0.,
                     self.options.animations.window_resize.anim,
                 );
+
+                let fullscreen_to = if self.is_fullscreen { 1. } else { 0. };
+                let fullscreen_progress = (fullscreen_from != fullscreen_to)
+                    .then(|| anim.restarted(fullscreen_from, fullscreen_to, 0.));
+
                 self.resize_animation = Some(ResizeAnimation {
                     anim,
                     size_from,
                     snapshot: animate_from,
                     offscreen,
+                    tile_size_from,
+                    fullscreen_progress,
                 });
             } else {
                 self.resize_animation = None;
@@ -281,14 +336,16 @@ impl<W: LayoutElement> Tile<W> {
         }
 
         let rules = self.window.rules();
-        let border_config = rules.border.resolve_against(self.options.border);
+        let border_config = self.options.layout.border.merged_with(&rules.border);
         self.border.update_config(border_config.into());
-        let focus_ring_config = rules
+        let focus_ring_config = self
+            .options
+            .layout
             .focus_ring
-            .resolve_against(self.options.focus_ring.into());
-        self.focus_ring.update_config(focus_ring_config.into());
+            .merged_with(&rules.focus_ring);
+        self.focus_ring.update_config(focus_ring_config);
 
-        let shadow_config = rules.shadow.resolve_against(self.options.shadow);
+        let shadow_config = self.options.layout.shadow.merged_with(&rules.shadow);
         self.shadow.update_config(shadow_config);
 
         let window_size = self.window_size();
@@ -348,22 +405,30 @@ impl<W: LayoutElement> Tile<W> {
 
     pub fn update_render_elements(&mut self, is_active: bool, view_rect: Rectangle<f64, Logical>) {
         let rules = self.window.rules();
+        let animated_tile_size = self.animated_tile_size();
+        let fullscreen_progress = self.fullscreen_progress();
 
         let draw_border_with_background = rules
             .draw_border_with_background
-            .unwrap_or_else(|| !self.window.has_ssd());
-        let border_width = self.effective_border_width().unwrap_or(0.);
-        let radius = if self.is_fullscreen {
-            CornerRadius::default()
-        } else {
-            rules
-                .geometry_corner_radius
-                .map_or(CornerRadius::default(), |radius| {
-                    radius.expanded_by(border_width as f32)
-                })
-        };
+            .unwrap_or_else(|| !self.window.has_ssd())
+            && fullscreen_progress < 1.;
+        let border_width = self.visual_border_width().unwrap_or(0.);
+
+        // Do the inverse of tile_size() in order to handle the unfullscreen animation for windows
+        // that were smaller than the fullscreen size, and therefore their animated_window_size() is
+        // currently much smaller than the tile size.
+        let mut border_window_size = animated_tile_size;
+        border_window_size.w -= border_width * 2.;
+        border_window_size.h -= border_width * 2.;
+
+        let radius = rules
+            .geometry_corner_radius
+            .map_or(CornerRadius::default(), |radius| {
+                radius.expanded_by(border_width as f32)
+            })
+            .scaled_by(1. - fullscreen_progress as f32);
         self.border.update_render_elements(
-            self.animated_window_size(),
+            border_window_size,
             is_active,
             !draw_border_with_background,
             self.window.is_urgent(),
@@ -376,29 +441,25 @@ impl<W: LayoutElement> Tile<W> {
             1.,
         );
 
-        let radius = if self.is_fullscreen {
-            CornerRadius::default()
-        } else if self.effective_border_width().is_some() {
+        let radius = if self.visual_border_width().is_some() {
             radius
         } else {
-            rules.geometry_corner_radius.unwrap_or_default()
+            rules
+                .geometry_corner_radius
+                .unwrap_or_default()
+                .scaled_by(1. - fullscreen_progress as f32)
         };
-        self.shadow.update_render_elements(
-            self.animated_tile_size(),
-            is_active,
-            radius,
-            self.scale,
-            1.,
-        );
+        self.shadow
+            .update_render_elements(animated_tile_size, is_active, radius, self.scale, 1.);
 
-        let draw_focus_ring_with_background = if self.effective_border_width().is_some() {
-            false
-        } else {
+        let draw_focus_ring_with_background = if self.border.is_off() && fullscreen_progress < 1. {
             draw_border_with_background
+        } else {
+            false
         };
         let radius = radius.expanded_by(self.focus_ring.width() as f32);
         self.focus_ring.update_render_elements(
-            self.animated_tile_size(),
+            animated_tile_size,
             is_active,
             !draw_focus_ring_with_background,
             self.window.is_urgent(),
@@ -407,6 +468,8 @@ impl<W: LayoutElement> Tile<W> {
             self.scale,
             1.,
         );
+
+        self.fullscreen_backdrop.resize(animated_tile_size);
     }
 
     pub fn scale(&self) -> f64 {
@@ -485,6 +548,17 @@ impl<W: LayoutElement> Tile<W> {
         });
     }
 
+    pub fn offset_move_y_anim_current(&mut self, offset: f64) {
+        if let Some(move_) = self.move_y_animation.as_mut() {
+            // If the anim is almost done, there's little point trying to offset it; we can let
+            // things jump. If it turns out like a bad idea, we could restart the anim instead.
+            let value = move_.anim.value();
+            if value > 0.001 {
+                move_.from += offset / value;
+            }
+        }
+    }
+
     pub fn stop_move_animations(&mut self) {
         self.move_x_animation = None;
         self.move_y_animation = None;
@@ -535,6 +609,20 @@ impl<W: LayoutElement> Tile<W> {
         self.is_fullscreen
     }
 
+    fn fullscreen_progress(&self) -> f64 {
+        if let Some(resize) = &self.resize_animation {
+            if let Some(anim) = &resize.fullscreen_progress {
+                return anim.clamped_value().clamp(0., 1.);
+            }
+        }
+
+        if self.is_fullscreen {
+            1.
+        } else {
+            0.
+        }
+    }
+
     /// Returns `None` if the border is hidden and `Some(width)` if it should be shown.
     pub fn effective_border_width(&self) -> Option<f64> {
         if self.is_fullscreen {
@@ -548,33 +636,47 @@ impl<W: LayoutElement> Tile<W> {
         Some(self.border.width())
     }
 
+    fn visual_border_width(&self) -> Option<f64> {
+        if self.border.is_off() {
+            return None;
+        }
+
+        let fullscreen_progress = self.fullscreen_progress();
+
+        // Only hide the border when fully fullscreen to avoid jarring border appearance.
+        if fullscreen_progress == 1. {
+            return None;
+        }
+
+        // FIXME: would be cool to, like, gradually resize the border from full width to 0 during
+        // fullscreening, but the rest of the code isn't quite ready for that yet. It needs to
+        // handle things like computing intermediate tile size when an animated resize starts during
+        // an animated unfullscreen resize.
+        Some(self.border.width())
+    }
+
     /// Returns the location of the window's visual geometry within this Tile.
     pub fn window_loc(&self) -> Point<f64, Logical> {
         let mut loc = Point::from((0., 0.));
 
-        // In fullscreen, center the window in the given size.
-        if self.is_fullscreen {
-            let window_size = self.window_size();
-            let target_size = self.view_size;
+        let window_size = self.animated_window_size();
+        let target_size = self.animated_tile_size();
 
-            // Windows aren't supposed to be larger than the fullscreen size, but in case we get
-            // one, leave it at the top-left as usual.
-            if window_size.w < target_size.w {
-                loc.x += (target_size.w - window_size.w) / 2.;
-            }
-            if window_size.h < target_size.h {
-                loc.y += (target_size.h - window_size.h) / 2.;
-            }
+        // Center the window within its tile.
+        //
+        // - Without borders, the sizes match, so this difference is zero.
+        // - Borders always match from all sides, so this difference is pre-rounded to physical.
+        // - In fullscreen, if the window is smaller than the tile, then it gets centered, otherwise
+        //   the tile size matches the window.
+        // - During animations, the window remains centered within the tile; this is important for
+        //   the to/from fullscreen animation.
+        loc.x += (target_size.w - window_size.w) / 2.;
+        loc.y += (target_size.h - window_size.h) / 2.;
 
-            // Round to physical pixels.
-            loc = loc
-                .to_physical_precise_round(self.scale)
-                .to_logical(self.scale);
-        }
-
-        if let Some(width) = self.effective_border_width() {
-            loc += (width, width).into();
-        }
+        // Round to physical pixels.
+        loc = loc
+            .to_physical_precise_round(self.scale)
+            .to_logical(self.scale);
 
         loc
     }
@@ -652,19 +754,17 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn animated_tile_size(&self) -> Size<f64, Logical> {
-        let mut size = self.animated_window_size();
+        let mut size = self.tile_size();
 
-        if self.is_fullscreen {
-            // Normally we'd just return the fullscreen size here, but this makes things a bit
-            // nicer if a fullscreen window is bigger than the fullscreen size for some reason.
-            size.w = f64::max(size.w, self.view_size.w);
-            size.h = f64::max(size.h, self.view_size.h);
-            return size;
-        }
+        if let Some(resize) = &self.resize_animation {
+            let val = resize.anim.value();
+            let size_from = resize.tile_size_from.to_f64();
 
-        if let Some(width) = self.effective_border_width() {
-            size.w += width * 2.;
-            size.h += width * 2.;
+            size.w = f64::max(1., size_from.w + (size.w - size_from.w) * val);
+            size.h = f64::max(1., size_from.h + (size.h - size_from.h) * val);
+            size = size
+                .to_physical_precise_round(self.scale)
+                .to_logical(self.scale);
         }
 
         size
@@ -675,6 +775,19 @@ impl<W: LayoutElement> Tile<W> {
         loc += self.window_loc();
         loc += self.window.buf_loc().to_f64();
         loc
+    }
+
+    /// Returns a partially-filled [`WindowLayout`].
+    ///
+    /// Only the sizing properties that a [`Tile`] can fill are filled.
+    pub fn ipc_layout_template(&self) -> WindowLayout {
+        WindowLayout {
+            pos_in_scrolling_layout: None,
+            tile_size: self.tile_size().into(),
+            window_size: self.window().size().into(),
+            tile_pos_in_workspace_view: None,
+            window_offset_in_tile: self.window_loc().into(),
+        }
     }
 
     fn is_in_input_region(&self, mut point: Point<f64, Logical>) -> bool {
@@ -805,17 +918,6 @@ impl<W: LayoutElement> Tile<W> {
         Point::from((0., y))
     }
 
-    pub fn draw_border_with_background(&self) -> bool {
-        if self.effective_border_width().is_some() {
-            return false;
-        }
-
-        self.window
-            .rules()
-            .draw_border_with_background
-            .unwrap_or_else(|| !self.window.has_ssd())
-    }
-
     fn render_inner<'a, R: NiriRenderer + 'a>(
         &'a self,
         renderer: &mut R,
@@ -827,14 +929,19 @@ impl<W: LayoutElement> Tile<W> {
         let _span = tracy_client::span!("Tile::render_inner");
 
         let scale = Scale::from(self.scale);
+        let fullscreen_progress = self.fullscreen_progress();
 
-        let win_alpha = override_alpha.map(|x| x as f32).unwrap_or_else(|| {
-            if self.is_fullscreen || self.window.is_ignoring_opacity_window_rule() {
-                1.
-            } else {
-                self.window.rules().opacity.unwrap_or(1.).clamp(0., 1.)
-            }
-        });
+        let win_alpha = if self.window.is_ignoring_opacity_window_rule() {
+            1.
+        } else {
+            let alpha = self.window.rules().opacity.unwrap_or(1.).clamp(0., 1.);
+
+            // Interpolate towards alpha = 1. at fullscreen.
+            let p = fullscreen_progress as f32;
+            alpha * (1. - p) + 1. * p
+        };
+
+        let win_alpha = override_alpha.map(|x| x as f32).unwrap_or(win_alpha);
 
         // This is here rather than in render_offset() because render_offset() is currently assumed
         // by the code to be temporary. So, for example, interactive move will try to "grab" the
@@ -853,8 +960,14 @@ impl<W: LayoutElement> Tile<W> {
         let area = Rectangle::new(window_render_loc, animated_window_size);
 
         let rules = self.window.rules();
-        let clip_to_geometry = !self.is_fullscreen && rules.clip_to_geometry == Some(true);
-        let radius = rules.geometry_corner_radius.unwrap_or_default();
+
+        // Clip to geometry including during the fullscreen animation to help with buggy clients
+        // that submit a full-sized buffer before acking the fullscreen state (Firefox).
+        let clip_to_geometry = fullscreen_progress < 1. && rules.clip_to_geometry == Some(true);
+        let radius = rules
+            .geometry_corner_radius
+            .unwrap_or_default()
+            .scaled_by(1. - fullscreen_progress as f32);
 
         // If we're resizing, try to render a shader, or a fallback.
         let mut resize_shader = None;
@@ -948,6 +1061,7 @@ impl<W: LayoutElement> Tile<W> {
         let mut window_surface = None;
         let mut window_popups = None;
         let mut rounded_corner_damage = None;
+        let has_border_shader = BorderRenderElement::has_shader(renderer);
         if resize_shader.is_none() && resize_fallback.is_none() {
             let window = self
                 .window
@@ -957,7 +1071,6 @@ impl<W: LayoutElement> Tile<W> {
             let radius = radius.fit_to(window_size.w as f32, window_size.h as f32);
 
             let clip_shader = ClippedSurfaceRenderElement::shader(renderer).cloned();
-            let has_border_shader = BorderRenderElement::has_shader(renderer);
 
             if clip_to_geometry && clip_shader.is_some() {
                 let damage = self.rounded_corner_damage.element();
@@ -1028,18 +1141,50 @@ impl<W: LayoutElement> Tile<W> {
             .chain(rounded_corner_damage)
             .chain(window_surface.into_iter().flatten());
 
-        let elem = self.is_fullscreen.then(|| {
-            SolidColorRenderElement::from_buffer(
-                &self.fullscreen_backdrop,
-                location,
-                1.,
-                Kind::Unspecified,
-            )
-            .into()
+        let elem = (fullscreen_progress > 0.).then(|| {
+            let alpha = fullscreen_progress as f32;
+
+            // During the un/fullscreen animation, render a border element in order to use the
+            // animated corner radius.
+            if fullscreen_progress < 1. && has_border_shader {
+                let border_width = self.visual_border_width().unwrap_or(0.);
+                let radius = rules
+                    .geometry_corner_radius
+                    .map_or(CornerRadius::default(), |radius| {
+                        radius.expanded_by(border_width as f32)
+                    })
+                    .scaled_by(1. - fullscreen_progress as f32);
+
+                let size = self.fullscreen_backdrop.size();
+                let color = self.fullscreen_backdrop.color();
+                BorderRenderElement::new(
+                    size,
+                    Rectangle::from_size(size),
+                    GradientInterpolation::default(),
+                    Color::from_color32f(color),
+                    Color::from_color32f(color),
+                    0.,
+                    Rectangle::from_size(size),
+                    0.,
+                    radius,
+                    scale.x as f32,
+                    alpha,
+                )
+                .with_location(location)
+                .into()
+            } else {
+                SolidColorRenderElement::from_buffer(
+                    &self.fullscreen_backdrop,
+                    location,
+                    alpha,
+                    Kind::Unspecified,
+                )
+                .into()
+            }
         });
         let rv = rv.chain(elem);
 
-        let elem = self.effective_border_width().map(|width| {
+        let elem = self.visual_border_width().map(|width| {
             self.border
                 .render(renderer, location + Point::from((width, width)))
                 .map(Into::into)
@@ -1202,7 +1347,6 @@ impl<W: LayoutElement> Tile<W> {
         use approx::assert_abs_diff_eq;
 
         assert_eq!(self.is_fullscreen, self.window.is_fullscreen());
-        assert_eq!(self.fullscreen_backdrop.size(), self.view_size);
 
         let scale = self.scale;
         let size = self.tile_size();

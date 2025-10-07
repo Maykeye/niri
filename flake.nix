@@ -4,7 +4,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    nix-filter.url = "github:numtide/nix-filter";
 
     # NOTE: This is not necessary for end users
     # You can omit it with `inputs.rust-overlay.follows = ""`
@@ -18,7 +17,6 @@
     {
       self,
       nixpkgs,
-      nix-filter,
       rust-overlay,
     }:
     let
@@ -50,16 +48,16 @@
           pname = "niri";
           version = self.shortRev or self.dirtyShortRev or "unknown";
 
-          src = nix-filter.lib.filter {
-            root = self;
-            include = [
-              "niri-config"
-              "niri-ipc"
-              "niri-visual-tests"
-              "resources"
-              "src"
-              ./Cargo.lock
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./niri-config
+              ./niri-ipc
+              ./niri-visual-tests
+              ./resources
+              ./src
               ./Cargo.toml
+              ./Cargo.lock
             ];
           };
 
@@ -116,6 +114,12 @@
           preCheck = ''
             export XDG_RUNTIME_DIR="$(mktemp -d)"
           '';
+
+          checkFlags = [
+            # These tests require the ability to access a "valid EGL Display", but that won't work
+            # inside the Nix sandbox
+            "--skip=::egl"
+          ];
 
           postInstall =
             ''
@@ -201,6 +205,7 @@
                   ];
                 }
               ))
+              pkgs.cargo-insta
             ];
 
             nativeBuildInputs = [

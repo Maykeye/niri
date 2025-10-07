@@ -13,9 +13,10 @@ use std::{env, mem, thread};
 use _server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDecorationsMode;
 use anyhow::{bail, ensure, Context};
 use calloop::futures::Scheduler;
+use niri_config::debug::PreviewRender;
 use niri_config::{
-    Config, FloatOrInt, Key, Modifiers, OutputName, PreviewRender, TrackLayout,
-    WarpMouseToFocusMode, WorkspaceReference,
+    Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode,
+    WorkspaceReference, Xkb,
 };
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::Keycode;
@@ -45,7 +46,7 @@ use smithay::desktop::{
     find_popup_root_surface, layer_map_for_output, LayerMap, LayerSurface, PopupGrab, PopupManager,
     PopupUngrabStrategy, Space, Window, WindowSurfaceType,
 };
-use smithay::input::keyboard::Layout as KeyboardLayout;
+use smithay::input::keyboard::{Layout as KeyboardLayout, XkbConfig};
 use smithay::input::pointer::{
     CursorIcon, CursorImageStatus, CursorImageSurfaceData, Focus,
     GrabStartData as PointerGrabStartData, MotionEvent,
@@ -110,10 +111,14 @@ use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::xdg_activation::XdgActivationState;
 use smithay::wayland::xdg_foreign::XdgForeignState;
 
+#[cfg(feature = "dbus")]
+use crate::a11y::A11y;
 use crate::animation::Clock;
 use crate::backend::tty::SurfaceDmabufFeedback;
 use crate::backend::{Backend, Headless, RenderResult, Tty, Winit};
 use crate::cursor::{CursorManager, CursorTextureCache, RenderCursor, XCursor};
+#[cfg(feature = "dbus")]
+use crate::dbus::freedesktop_locale1::Locale1ToNiri;
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
 #[cfg(feature = "dbus")]
@@ -156,12 +161,13 @@ use crate::render_helpers::{
     render_to_texture, render_to_vec, shaders, RenderTarget, SplitElements,
 };
 use crate::ui::config_error_notification::ConfigErrorNotification;
-use crate::ui::exit_confirm_dialog::ExitConfirmDialog;
+use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
 use crate::ui::hotkey_overlay::HotkeyOverlay;
 use crate::ui::screen_transition::{self, ScreenTransition};
 use crate::ui::screenshot_ui::{OutputScreenshot, ScreenshotUi, ScreenshotUiRenderElement};
 use crate::utils::scale::{closest_representable_scale, guess_monitor_scale};
 use crate::utils::spawning::{CHILD_DISPLAY, CHILD_ENV};
+use crate::utils::watcher::Watcher;
 use crate::utils::xwayland::satellite::Satellite;
 use crate::utils::{
     center, center_f64, expand_home, get_monotonic_time, ipc_transform_to_smithay, is_mapped,
@@ -187,6 +193,8 @@ pub struct Niri {
     /// reloading the config from disk to determine if the output configuration should be reloaded
     /// (and transient changes dropped).
     pub config_file_output_config: niri_config::Outputs,
+
+    pub config_file_watcher: Option<Watcher>,
 
     pub event_loop: LoopHandle<'static, State>,
     pub scheduler: Scheduler<()>,
@@ -319,6 +327,9 @@ pub struct Niri {
     pub is_fdo_idle_inhibited: Arc<AtomicBool>,
     pub keyboard_shortcuts_inhibiting_surfaces: HashMap<WlSurface, KeyboardShortcutsInhibitor>,
 
+    /// Most recent XKB settings from org.freedesktop.locale1.
+    pub xkb_from_locale1: Option<Xkb>,
+
     pub cursor_manager: CursorManager,
     pub cursor_texture_cache: CursorTextureCache,
     pub cursor_shape_manager_state: CursorShapeManagerState,
@@ -369,7 +380,7 @@ pub struct Niri {
     pub screenshot_ui: ScreenshotUi,
     pub config_error_notification: ConfigErrorNotification,
     pub hotkey_overlay: HotkeyOverlay,
-    pub exit_confirm_dialog: Option<ExitConfirmDialog>,
+    pub exit_confirm_dialog: ExitConfirmDialog,
 
     pub pick_window: Option<async_channel::Sender<Option<MappedId>>>,
     pub pick_color: Option<async_channel::Sender<Option<niri_ipc::PickedColor>>>,
@@ -379,6 +390,10 @@ pub struct Niri {
 
     #[cfg(feature = "dbus")]
     pub dbus: Option<crate::dbus::DBusServers>,
+    #[cfg(feature = "dbus")]
+    pub a11y_keyboard_monitor: Option<crate::dbus::freedesktop_a11y::KeyboardMonitor>,
+    #[cfg(feature = "dbus")]
+    pub a11y: A11y,
     #[cfg(feature = "dbus")]
     pub inhibit_power_key_fd: Option<zbus::zvariant::OwnedFd>,
 
@@ -468,9 +483,8 @@ pub struct OutputState {
     ///    would occur, based on the last presentation time and output refresh interval. Sequence
     ///    is incremented in that timer, before attempting a redraw or sending frame callbacks.
     pub frame_callback_sequence: u32,
-    /// Solid color buffer for the background that we use instead of clearing to avoid damage
+    /// Solid color buffer for the backdrop that we use instead of clearing to avoid damage
     /// tracking issues and make screenshots easier.
-    pub background_buffer: SolidColorBuffer,
     pub backdrop_buffer: SolidColorBuffer,
     pub lock_render_state: LockRenderState,
     pub lock_surface: Option<LockSurface>,
@@ -511,6 +525,7 @@ pub enum KeyboardFocus {
     LayerShell { surface: WlSurface },
     LockScreen { surface: Option<WlSurface> },
     ScreenshotUi,
+    ExitConfirmDialog,
     Overview,
 }
 
@@ -527,6 +542,8 @@ pub struct PointContents {
     pub window: Option<(Window, HitType)>,
     // If surface belongs to a layer surface, this is that layer surface.
     pub layer: Option<LayerSurface>,
+    // Pointer is over a hot corner.
+    pub hot_corner: bool,
 }
 
 #[derive(Debug, Default)]
@@ -608,6 +625,7 @@ impl KeyboardFocus {
             KeyboardFocus::LayerShell { surface } => Some(surface),
             KeyboardFocus::LockScreen { surface } => surface.as_ref(),
             KeyboardFocus::ScreenshotUi => None,
+            KeyboardFocus::ExitConfirmDialog => None,
             KeyboardFocus::Overview => None,
         }
     }
@@ -618,6 +636,7 @@ impl KeyboardFocus {
             KeyboardFocus::LayerShell { surface } => Some(surface),
             KeyboardFocus::LockScreen { surface } => surface,
             KeyboardFocus::ScreenshotUi => None,
+            KeyboardFocus::ExitConfirmDialog => None,
             KeyboardFocus::Overview => None,
         }
     }
@@ -759,6 +778,10 @@ impl State {
         self.refresh_ipc_outputs();
         self.ipc_refresh_layout();
         self.ipc_refresh_keyboard_layout_index();
+
+        // Needs to be called after updating the keyboard focus.
+        #[cfg(feature = "dbus")]
+        self.niri.refresh_a11y();
     }
 
     fn notify_blocker_cleared(&mut self) {
@@ -946,7 +969,10 @@ impl State {
         let pointer = &self.niri.seat.get_pointer().unwrap();
         let location = pointer.current_location();
 
-        if !self.niri.is_locked() && !self.niri.screenshot_ui.is_open() {
+        if !self.niri.exit_confirm_dialog.is_open()
+            && !self.niri.is_locked()
+            && !self.niri.screenshot_ui.is_open()
+        {
             // Don't refresh cursor focus during transitions.
             if let Some((output, _)) = self.niri.output_under(location) {
                 let monitor = self.niri.layout.monitor_for_output(output).unwrap();
@@ -1065,7 +1091,9 @@ impl State {
         }
 
         // Compute the current focus.
-        let focus = if self.niri.is_locked() {
+        let focus = if self.niri.exit_confirm_dialog.is_open() {
+            KeyboardFocus::ExitConfirmDialog
+        } else if self.niri.is_locked() {
             KeyboardFocus::LockScreen {
                 surface: self.niri.lock_surface_focus(),
             }
@@ -1312,6 +1340,22 @@ impl State {
         }
     }
 
+    fn set_xkb_config(&mut self, xkb: XkbConfig) {
+        let keyboard = self.niri.seat.get_keyboard().unwrap();
+        let num_lock = keyboard.modifier_state().num_lock;
+        if let Err(err) = keyboard.set_xkb_config(self, xkb) {
+            warn!("error updating xkb config: {err:?}");
+            return;
+        }
+
+        // Restore num lock to its previous value.
+        let mut mods_state = keyboard.modifier_state();
+        if mods_state.num_lock != num_lock {
+            mods_state.num_lock = num_lock;
+            keyboard.set_modifier_state(mods_state);
+        }
+    }
+
     pub fn reload_config(&mut self, config: Result<Config, ()>) {
         let _span = tracy_client::span!("State::reload_config");
 
@@ -1320,6 +1364,10 @@ impl State {
             Err(()) => {
                 self.niri.config_error_notification.show();
                 self.niri.queue_redraw_all();
+
+                #[cfg(feature = "dbus")]
+                self.niri.a11y_announce_config_error();
+
                 return;
             }
         };
@@ -1350,7 +1398,7 @@ impl State {
             self.niri.layout.ensure_named_workspace(ws_config);
         }
 
-        let rate = 1.0 / config.animations.slowdown.0.max(0.001);
+        let rate = 1.0 / config.animations.slowdown.max(0.001);
         self.niri.clock.set_rate(rate);
         self.niri
             .clock
@@ -1395,7 +1443,10 @@ impl State {
 
         if config.input.touchpad != old_config.input.touchpad
             || config.input.mouse != old_config.input.mouse
+            || config.input.trackball != old_config.input.trackball
             || config.input.trackpoint != old_config.input.trackpoint
+            || config.input.tablet != old_config.input.tablet
+            || config.input.touch != old_config.input.touch
         {
             libinput_config_changed = true;
         }
@@ -1470,6 +1521,10 @@ impl State {
             output_config_changed = true;
         }
 
+        if config.debug.ignored_drm_devices != old_config.debug.ignored_drm_devices {
+            output_config_changed = true;
+        }
+
         // FIXME: move backdrop rendering into layout::Monitor, then this will become unnecessary.
         if config.overview.backdrop_color != old_config.overview.backdrop_color {
             output_config_changed = true;
@@ -1507,10 +1562,13 @@ impl State {
             }
 
             if set_xkb_config {
-                let keyboard = self.niri.seat.get_keyboard().unwrap();
-                if let Err(err) = keyboard.set_xkb_config(self, xkb.to_xkb_config()) {
-                    warn!("error updating xkb config: {err:?}");
+                // If xkb is unset in the niri config, use settings from locale1.
+                if xkb == Xkb::default() {
+                    trace!("using xkb from locale1");
+                    xkb = self.niri.xkb_from_locale1.clone().unwrap_or_default();
                 }
+
+                self.set_xkb_config(xkb.to_xkb_config());
             }
 
             self.ipc_keyboard_layouts_changed();
@@ -1617,12 +1675,6 @@ impl State {
                 resized_outputs.push(output.clone());
             }
 
-            let background_color = config
-                .and_then(|c| c.background_color)
-                .unwrap_or(full_config.layout.background_color)
-                .to_array_unpremul();
-            let background_color = Color32F::from(background_color);
-
             let mut backdrop_color = config
                 .and_then(|c| c.backdrop_color)
                 .unwrap_or(full_config.overview.backdrop_color)
@@ -1631,14 +1683,30 @@ impl State {
             let backdrop_color = Color32F::from(backdrop_color);
 
             if let Some(state) = self.niri.output_state.get_mut(output) {
-                if state.background_buffer.color() != background_color {
-                    state.background_buffer.set_color(background_color);
-                    recolored_outputs.push(output.clone());
-                }
                 if state.backdrop_buffer.color() != backdrop_color {
                     state.backdrop_buffer.set_color(backdrop_color);
                     recolored_outputs.push(output.clone());
                 }
+            }
+
+            for mon in self.niri.layout.monitors_mut() {
+                if mon.output() != output {
+                    continue;
+                }
+
+                let mut layout_config = config.and_then(|c| c.layout.clone());
+                // Support the deprecated non-layout background-color key.
+                if let Some(layout) = &mut layout_config {
+                    if layout.background_color.is_none() {
+                        layout.background_color = config.and_then(|c| c.background_color);
+                    }
+                }
+
+                if mon.update_layout_config(layout_config) {
+                    // Also redraw these; if anything, the background color could've changed.
+                    recolored_outputs.push(output.clone());
+                }
+                break;
             }
         }
 
@@ -1885,12 +1953,8 @@ impl State {
 
         match &cast.target {
             CastTarget::Nothing => {
-                let config = self.niri.config.borrow();
-                let wait_for_sync = config.debug.wait_for_frame_completion_in_pipewire;
-                drop(config);
-
                 self.backend.with_primary_renderer(|renderer| {
-                    if cast.dequeue_buffer_and_clear(renderer, wait_for_sync) {
+                    if cast.dequeue_buffer_and_clear(renderer) {
                         cast.last_frame_time = get_monotonic_time();
                     }
                 });
@@ -1930,10 +1994,6 @@ impl State {
                     }
                 }
 
-                let config = self.niri.config.borrow();
-                let wait_for_sync = config.debug.wait_for_frame_completion_in_pipewire;
-                drop(config);
-
                 self.backend.with_primary_renderer(|renderer| {
                     // FIXME: pointer.
                     let elements = mapped
@@ -1941,13 +2001,7 @@ impl State {
                         .rev()
                         .collect::<Vec<_>>();
 
-                    if cast.dequeue_buffer_and_render(
-                        renderer,
-                        &elements,
-                        bbox.size,
-                        scale,
-                        wait_for_sync,
-                    ) {
+                    if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale) {
                         cast.last_frame_time = get_monotonic_time();
                     }
                 });
@@ -2033,7 +2087,8 @@ impl State {
                 let pw = if let Some(pw) = &self.niri.pipewire {
                     pw
                 } else {
-                    match PipeWire::new(&self.niri.event_loop, self.niri.pw_to_niri.clone()) {
+                    match PipeWire::new(self.niri.event_loop.clone(), self.niri.pw_to_niri.clone())
+                    {
                         Ok(pipewire) => self.niri.pipewire.insert(pipewire),
                         Err(err) => {
                             warn!(
@@ -2219,7 +2274,7 @@ impl State {
             },
         );
 
-        self.niri.layout.with_windows(|mapped, _, _| {
+        self.niri.layout.with_windows(|mapped, _, _, _| {
             let id = mapped.id().get();
             let props = with_toplevel_role(mapped.toplevel(), |role| {
                 gnome_shell_introspect::WindowProperties {
@@ -2242,6 +2297,26 @@ impl State {
         if let Err(err) = to_introspect.send_blocking(msg) {
             warn!("error sending windows to introspect: {err:?}");
         }
+    }
+
+    #[cfg(feature = "dbus")]
+    pub fn on_locale1_msg(&mut self, msg: Locale1ToNiri) {
+        let Locale1ToNiri::XkbChanged(xkb) = msg;
+
+        trace!("locale1 xkb settings changed: {xkb:?}");
+        let xkb = self.niri.xkb_from_locale1.insert(xkb);
+
+        {
+            let config = self.niri.config.borrow();
+            if config.input.keyboard.xkb != Xkb::default() {
+                trace!("ignoring locale1 xkb change because niri config has xkb settings");
+                return;
+            }
+        }
+
+        let xkb = xkb.clone();
+        self.set_xkb_config(xkb.to_xkb_config());
+        self.ipc_keyboard_layouts_changed();
     }
 }
 
@@ -2266,7 +2341,7 @@ impl Niri {
 
         let mut animation_clock = Clock::default();
 
-        let rate = 1.0 / config_.animations.slowdown.0.max(0.001);
+        let rate = 1.0 / config_.animations.slowdown.max(0.001);
         animation_clock.set_rate(rate);
         animation_clock.set_complete_instantly(config_.animations.off);
 
@@ -2437,13 +2512,10 @@ impl Niri {
             hotkey_overlay.show();
         }
 
-        let exit_confirm_dialog = match ExitConfirmDialog::new() {
-            Ok(x) => Some(x),
-            Err(err) => {
-                warn!("error creating the exit confirm dialog: {err:?}");
-                None
-            }
-        };
+        let exit_confirm_dialog = ExitConfirmDialog::new(animation_clock.clone(), config.clone());
+
+        #[cfg(feature = "dbus")]
+        let a11y = A11y::new(event_loop.clone());
 
         event_loop
             .insert_source(
@@ -2518,6 +2590,7 @@ impl Niri {
         let mut niri = Self {
             config,
             config_file_output_config,
+            config_file_watcher: None,
 
             event_loop,
             scheduler,
@@ -2600,6 +2673,7 @@ impl Niri {
             idle_inhibiting_surfaces: HashSet::new(),
             is_fdo_idle_inhibited: Arc::new(AtomicBool::new(false)),
             keyboard_shortcuts_inhibiting_surfaces: HashMap::new(),
+            xkb_from_locale1: None,
             cursor_manager,
             cursor_texture_cache: Default::default(),
             cursor_shape_manager_state,
@@ -2639,6 +2713,10 @@ impl Niri {
 
             #[cfg(feature = "dbus")]
             dbus: None,
+            #[cfg(feature = "dbus")]
+            a11y_keyboard_monitor: None,
+            #[cfg(feature = "dbus")]
+            a11y,
             #[cfg(feature = "dbus")]
             inhibit_power_key_fd: None,
 
@@ -2860,19 +2938,23 @@ impl Niri {
             .map(|c| ipc_transform_to_smithay(c.transform))
             .unwrap_or(Transform::Normal);
 
-        let background_color = c
-            .and_then(|c| c.background_color)
-            .unwrap_or(config.layout.background_color)
-            .to_array_unpremul();
-
-        let backdrop_color = c
+        let mut backdrop_color = c
             .and_then(|c| c.backdrop_color)
             .unwrap_or(config.overview.backdrop_color)
             .to_array_unpremul();
+        backdrop_color[3] = 1.;
 
         // FIXME: fix winit damage on other transforms.
         if name.connector == "winit" {
             transform = Transform::Flipped180;
+        }
+
+        let mut layout_config = c.and_then(|c| c.layout.clone());
+        // Support the deprecated non-layout background-color key.
+        if let Some(layout) = &mut layout_config {
+            if layout.background_color.is_none() {
+                layout.background_color = c.and_then(|c| c.background_color);
+            }
         }
         drop(config);
 
@@ -2884,7 +2966,7 @@ impl Niri {
             None,
         );
 
-        self.layout.add_output(output.clone());
+        self.layout.add_output(output.clone(), layout_config);
 
         let lock_render_state = if self.is_locked() {
             // We haven't rendered anything yet so it's as good as locked.
@@ -2902,7 +2984,6 @@ impl Niri {
             frame_clock: FrameClock::new(refresh_interval, vrr),
             last_drm_sequence: None,
             frame_callback_sequence: 0,
-            background_buffer: SolidColorBuffer::new(size, background_color),
             backdrop_buffer: SolidColorBuffer::new(size, backdrop_color),
             lock_render_state,
             lock_surface: None,
@@ -3011,7 +3092,6 @@ impl Niri {
         self.layout.update_output_size(output);
 
         if let Some(state) = self.output_state.get_mut(output) {
-            state.background_buffer.resize(output_size);
             state.backdrop_buffer.resize(output_size);
 
             state.lock_color_buffer.resize(output_size);
@@ -3073,6 +3153,49 @@ impl Niri {
         Some((output, pos_within_output))
     }
 
+    fn is_inside_hot_corner(&self, output: &Output, pos: Point<f64, Logical>) -> bool {
+        let config = self.config.borrow();
+        let hot_corners = output
+            .user_data()
+            .get::<OutputName>()
+            .and_then(|name| config.outputs.find(name))
+            .and_then(|c| c.hot_corners)
+            .unwrap_or(config.gestures.hot_corners);
+
+        if hot_corners.off {
+            return false;
+        }
+
+        // Use size from the ceiled output geometry, since that's what we currently use for pointer
+        // motion clamping.
+        let geom = self.global_space.output_geometry(output).unwrap();
+        let size = geom.size.to_f64();
+
+        let contains = move |corner: Point<f64, Logical>| {
+            Rectangle::new(corner, Size::new(1., 1.)).contains(pos)
+        };
+
+        if hot_corners.top_right && contains(Point::new(size.w - 1., 0.)) {
+            return true;
+        }
+        if hot_corners.bottom_left && contains(Point::new(0., size.h - 1.)) {
+            return true;
+        }
+        if hot_corners.bottom_right && contains(Point::new(size.w - 1., size.h - 1.)) {
+            return true;
+        }
+
+        // If the user didn't explicitly set any corners, we default to top-left.
+        if (hot_corners.top_left
+            || !(hot_corners.top_right || hot_corners.bottom_right || hot_corners.bottom_left))
+            && contains(Point::new(0., 0.))
+        {
+            return true;
+        }
+
+        false
+    }
+
     pub fn is_sticky_obscured_under(
         &self,
         output: &Output,
@@ -3116,12 +3239,8 @@ impl Niri {
             return false;
         }
 
-        let hot_corners = self.config.borrow().gestures.hot_corners;
-        if !hot_corners.off {
-            let hot_corner = Rectangle::from_size(Size::from((1., 1.)));
-            if hot_corner.contains(pos_within_output) {
-                return true;
-            }
+        if self.is_inside_hot_corner(output, pos_within_output) {
+            return true;
         }
 
         if layer_popup_under(Layer::Top) || layer_toplevel_under(Layer::Top) {
@@ -3183,7 +3302,7 @@ impl Niri {
         extended_bounds: bool,
         pos: Point<f64, Logical>,
     ) -> Option<(Output, &Workspace<Mapped>)> {
-        if self.is_locked() || self.screenshot_ui.is_open() {
+        if self.exit_confirm_dialog.is_open() || self.is_locked() || self.screenshot_ui.is_open() {
             return None;
         }
 
@@ -3216,7 +3335,7 @@ impl Niri {
     /// The cursor may be inside the window's activation region, but not within the window's input
     /// region.
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<&Mapped> {
-        if self.is_locked() || self.screenshot_ui.is_open() {
+        if self.exit_confirm_dialog.is_open() || self.is_locked() || self.screenshot_ui.is_open() {
             return None;
         }
 
@@ -3268,7 +3387,9 @@ impl Niri {
         // The ordering here must be consistent with the ordering in render() so that input is
         // consistent with the visuals.
 
-        if self.is_locked() {
+        if self.exit_confirm_dialog.is_open() {
+            return rv;
+        } else if self.is_locked() {
             let Some(state) = self.output_state.get(output) else {
                 return rv;
             };
@@ -3391,12 +3512,9 @@ impl Niri {
                 .or_else(|| layer_toplevel_under(Layer::Bottom))
                 .or_else(|| layer_toplevel_under(Layer::Background));
         } else {
-            let hot_corners = self.config.borrow().gestures.hot_corners;
-            if !hot_corners.off {
-                let hot_corner = Rectangle::from_size(Size::from((1., 1.)));
-                if hot_corner.contains(pos_within_output) {
-                    return rv;
-                }
+            if self.is_inside_hot_corner(output, pos_within_output) {
+                rv.hot_corner = true;
+                return rv;
             }
 
             under = under
@@ -3733,7 +3851,7 @@ impl Niri {
                 pointer_pos,
                 output_scale,
                 1.,
-                Kind::Unspecified,
+                Kind::ScanoutCandidate,
             ));
         }
 
@@ -3898,6 +4016,7 @@ impl Niri {
             // layer-shell, the layout will briefly draw as active, despite never having focus.
             KeyboardFocus::LockScreen { .. } => true,
             KeyboardFocus::ScreenshotUi => true,
+            KeyboardFocus::ExitConfirmDialog => true,
             KeyboardFocus::Overview => true,
         };
 
@@ -3984,7 +4103,7 @@ impl Niri {
         let mut seen = HashSet::new();
         let mut output_changed = vec![];
 
-        self.layout.with_windows(|mapped, output, _| {
+        self.layout.with_windows(|mapped, output, _, _| {
             seen.insert(mapped.window.clone());
 
             let Some(output) = output else {
@@ -4028,6 +4147,7 @@ impl Niri {
 
         self.layout.advance_animations();
         self.config_error_notification.advance_animations();
+        self.exit_confirm_dialog.advance_animations();
         self.screenshot_ui.advance_animations();
 
         for state in self.output_state.values_mut() {
@@ -4109,11 +4229,12 @@ impl Niri {
         }
 
         // Next, the exit confirm dialog.
-        if let Some(dialog) = &self.exit_confirm_dialog {
-            if let Some(element) = dialog.render(renderer, output) {
-                elements.push(element.into());
-            }
-        }
+        elements.extend(
+            self.exit_confirm_dialog
+                .render(renderer, output)
+                .into_iter()
+                .map(OutputRenderElements::from),
+        );
 
         // Next, the config error notification too.
         if let Some(element) = self.config_error_notification.render(renderer, output) {
@@ -4130,7 +4251,7 @@ impl Niri {
                     (0, 0),
                     output_scale,
                     1.,
-                    Kind::Unspecified,
+                    Kind::ScanoutCandidate,
                 ));
             }
 
@@ -4153,13 +4274,6 @@ impl Niri {
 
         // Prepare the background elements.
         let state = self.output_state.get(output).unwrap();
-        let background_buffer = state.background_buffer.clone();
-        let background = SolidColorRenderElement::from_buffer(
-            &background_buffer,
-            (0., 0.),
-            1.,
-            Kind::Unspecified,
-        );
         let backdrop = SolidColorRenderElement::from_buffer(
             &state.backdrop_buffer,
             (0., 0.),
@@ -4200,7 +4314,7 @@ impl Niri {
         let zoom = mon.overview_zoom();
         let monitor_elements = Vec::from_iter(
             mon.render_elements(renderer, target, focus_ring)
-                .map(|(geo, iter)| (geo, Vec::from_iter(iter))),
+                .map(|(geo, bg, iter)| (geo, bg, Vec::from_iter(iter))),
         );
         let workspace_shadow_elements = Vec::from_iter(mon.render_workspace_shadows(renderer));
         let insert_hint_elements = mon.render_insert_hint_between_workspaces(renderer);
@@ -4244,17 +4358,24 @@ impl Niri {
                     .into_iter()
                     .map(OutputRenderElements::from),
             );
+
+            let mut ws_background = None;
             elements.extend(
                 monitor_elements
                     .into_iter()
-                    .flat_map(|(_ws_geo, iter)| iter)
+                    .flat_map(|(_ws_geo, ws_bg, iter)| {
+                        ws_background = Some(ws_bg);
+                        iter
+                    })
                     .map(OutputRenderElements::from),
             );
 
             elements.extend(top_layer.into_iter().map(OutputRenderElements::from));
             elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
 
-            elements.push(OutputRenderElements::from(background));
+            if let Some(ws_background) = ws_background {
+                elements.push(OutputRenderElements::from(ws_background));
+            }
 
             elements.extend(
                 workspace_shadow_elements
@@ -4276,7 +4397,7 @@ impl Niri {
                     .map(OutputRenderElements::from),
             );
 
-            for (ws_geo, ws_elements) in monitor_elements {
+            for (ws_geo, ws_background, ws_elements) in monitor_elements {
                 // Collect all other layer-shell elements.
                 let mut layer_elems = SplitElements::default();
                 extend_from_layer(&mut layer_elems, Layer::Bottom, false);
@@ -4300,11 +4421,7 @@ impl Niri {
                         .map(OutputRenderElements::from),
                 );
 
-                if let Some(elem) =
-                    scale_relocate_crop(background.clone(), output_scale, zoom, ws_geo)
-                {
-                    elements.push(OutputRenderElements::from(elem));
-                }
+                elements.push(OutputRenderElements::from(ws_background));
             }
 
             elements.extend(
@@ -4377,6 +4494,7 @@ impl Niri {
             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
             state.unfinished_animations_remain |=
                 self.config_error_notification.are_animations_ongoing();
+            state.unfinished_animations_remain |= self.exit_confirm_dialog.are_animations_ongoing();
             state.unfinished_animations_remain |= self.screenshot_ui.are_animations_ongoing();
             state.unfinished_animations_remain |= state.screen_transition.is_some();
 
@@ -4836,6 +4954,7 @@ impl Niri {
                 subpixel: Subpixel::Unknown,
                 make: String::new(),
                 model: String::new(),
+                serial_number: String::new(),
             },
         );
         let output = &output;
@@ -4973,16 +5092,12 @@ impl Niri {
 
         let scale = Scale::from(output.current_scale().fractional_scale());
 
-        let config = self.config.borrow();
-        let wait_for_sync = config.debug.wait_for_frame_completion_in_pipewire;
-        drop(config);
-
         let mut elements = None;
         let mut casts_to_stop = vec![];
 
         let mut casts = mem::take(&mut self.casts);
         for cast in &mut casts {
-            if !cast.is_active.get() {
+            if !cast.is_active() {
                 continue;
             }
 
@@ -4999,7 +5114,7 @@ impl Niri {
                 }
             }
 
-            if cast.check_time_and_schedule(&self.event_loop, output, target_presentation_time) {
+            if cast.check_time_and_schedule(output, target_presentation_time) {
                 continue;
             }
 
@@ -5008,7 +5123,7 @@ impl Niri {
                 self.render(renderer, output, true, RenderTarget::Screencast)
             });
 
-            if cast.dequeue_buffer_and_render(renderer, elements, size, scale, wait_for_sync) {
+            if cast.dequeue_buffer_and_render(renderer, elements, size, scale) {
                 cast.last_frame_time = target_presentation_time;
             }
         }
@@ -5030,15 +5145,11 @@ impl Niri {
 
         let scale = Scale::from(output.current_scale().fractional_scale());
 
-        let config = self.config.borrow();
-        let wait_for_sync = config.debug.wait_for_frame_completion_in_pipewire;
-        drop(config);
-
         let mut casts_to_stop = vec![];
 
         let mut casts = mem::take(&mut self.casts);
         for cast in &mut casts {
-            if !cast.is_active.get() {
+            if !cast.is_active() {
                 continue;
             }
 
@@ -5065,15 +5176,14 @@ impl Niri {
                 }
             }
 
-            if cast.check_time_and_schedule(&self.event_loop, output, target_presentation_time) {
+            if cast.check_time_and_schedule(output, target_presentation_time) {
                 continue;
             }
 
             // FIXME: pointer.
             let elements: Vec<_> = mapped.render_for_screen_cast(renderer, scale).collect();
 
-            if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale, wait_for_sync)
-            {
+            if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale) {
                 cast.last_frame_time = target_presentation_time;
             }
         }
@@ -6272,10 +6382,8 @@ niri_render_elements! {
         Wayland = WaylandSurfaceRenderElement<R>,
         NamedPointer = MemoryRenderBufferRenderElement<R>,
         SolidColor = SolidColorRenderElement,
-        RelocatedSolidColor = CropRenderElement<RelocateRenderElement<RescaleRenderElement<
-            SolidColorRenderElement
-        >>>,
         ScreenshotUi = ScreenshotUiRenderElement,
+        ExitConfirmDialog = ExitConfirmDialogRenderElement,
         Texture = PrimaryGpuTextureRenderElement,
         // Used for the CPU-rendered panels.
         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,

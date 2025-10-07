@@ -13,13 +13,10 @@ use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::DrmNode;
 use smithay::backend::input::{InputEvent, TabletToolDescriptor};
 use smithay::desktop::{PopupKind, PopupManager};
-use smithay::input::pointer::{
-    CursorIcon, CursorImageStatus, CursorImageSurfaceData, PointerHandle,
-};
+use smithay::input::pointer::{CursorIcon, CursorImageStatus, PointerHandle};
 use smithay::input::{keyboard, Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::rustix::fs::{fcntl_setfl, OFlags};
-use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
@@ -92,7 +89,7 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
-use crate::utils::{output_size, send_scale_transform, with_toplevel_role};
+use crate::utils::{output_size, send_scale_transform};
 use crate::{
     delegate_ext_workspace, delegate_foreign_toplevel, delegate_gamma_control,
     delegate_mutter_x11_interop, delegate_output_management, delegate_screencopy,
@@ -312,8 +309,8 @@ impl SelectionHandler for State {
 }
 
 impl DataDeviceHandler for State {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.niri.data_device_state
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.niri.data_device_state
     }
 }
 
@@ -324,23 +321,10 @@ impl ClientDndGrabHandler for State {
         icon: Option<WlSurface>,
         _seat: Seat<Self>,
     ) {
-        let offset = if let CursorImageStatus::Surface(ref surface) =
-            self.niri.cursor_manager.cursor_image()
-        {
-            with_states(surface, |states| {
-                let hotspot = states
-                    .data_map
-                    .get::<CursorImageSurfaceData>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .hotspot;
-                Point::from((-hotspot.x, -hotspot.y))
-            })
-        } else {
-            (0, 0).into()
-        };
-        self.niri.dnd_icon = icon.map(|surface| DndIcon { surface, offset });
+        self.niri.dnd_icon = icon.map(|surface| DndIcon {
+            surface,
+            offset: Point::new(0, 0),
+        });
         // FIXME: more granular
         self.niri.queue_redraw_all();
     }
@@ -392,23 +376,23 @@ impl ServerDndGrabHandler for State {}
 delegate_data_device!(State);
 
 impl PrimarySelectionHandler for State {
-    fn primary_selection_state(&self) -> &PrimarySelectionState {
-        &self.niri.primary_selection_state
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.niri.primary_selection_state
     }
 }
 delegate_primary_selection!(State);
 
 impl WlrDataControlHandler for State {
-    fn data_control_state(&self) -> &WlrDataControlState {
-        &self.niri.wlr_data_control_state
+    fn data_control_state(&mut self) -> &mut WlrDataControlState {
+        &mut self.niri.wlr_data_control_state
     }
 }
 
 delegate_data_control!(State);
 
 impl ExtDataControlHandler for State {
-    fn data_control_state(&self) -> &ExtDataControlState {
-        &self.niri.ext_data_control_state
+    fn data_control_state(&mut self) -> &mut ExtDataControlState {
+        &mut self.niri.ext_data_control_state
     }
 }
 
@@ -543,15 +527,6 @@ impl ForeignToplevelHandler for State {
     fn set_fullscreen(&mut self, wl_surface: WlSurface, wl_output: Option<WlOutput>) {
         if let Some((mapped, current_output)) = self.niri.layout.find_window_and_output(&wl_surface)
         {
-            let has_fullscreen_cap = with_toplevel_role(mapped.toplevel(), |role| {
-                role.current
-                    .capabilities
-                    .contains(xdg_toplevel::WmCapabilities::Fullscreen)
-            });
-            if !has_fullscreen_cap {
-                return;
-            }
-
             let window = mapped.window.clone();
 
             if let Some(requested_output) = wl_output.as_ref().and_then(Output::from_resource) {
@@ -608,7 +583,7 @@ impl ExtWorkspaceHandler for State {
         if let Some((old_output, old_idx)) = self.niri.find_output_and_workspace_index(reference) {
             self.niri
                 .layout
-                .move_workspace_to_output_by_id(old_idx, old_output, output);
+                .move_workspace_to_output_by_id(old_idx, old_output, &output);
         }
     }
 }

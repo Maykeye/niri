@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::iter::zip;
 use std::num::NonZeroU64;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -83,6 +83,8 @@ pub struct Tty {
     primary_node: DrmNode,
     // DRM render node corresponding to the primary GPU.
     primary_render_node: DrmNode,
+    // Ignored DRM nodes.
+    ignored_nodes: HashSet<DrmNode>,
     // Devices indexed by DRM node (not necessarily the render node).
     devices: HashMap<DrmNode, OutputDevice>,
     // The dma-buf global corresponds to the output device (the primary GPU). It is only `Some()`
@@ -250,6 +252,12 @@ struct GammaProps {
     previous_blob: Option<NonZeroU64>,
 }
 
+struct ConnectorProperties<'a> {
+    device: &'a DrmDevice,
+    connector: connector::Handle,
+    properties: Vec<(property::Info, property::RawValue)>,
+}
+
 impl Tty {
     pub fn new(
         config: Rc<RefCell<Config>>,
@@ -322,6 +330,11 @@ impl Tty {
         }
         info!("using as the render node: {node_path}");
 
+        let mut ignored_nodes = ignored_nodes_from_config(&config.borrow());
+        if ignored_nodes.remove(&primary_node) || ignored_nodes.remove(&primary_render_node) {
+            warn!("ignoring the primary node or render node is not allowed");
+        }
+
         Ok(Self {
             config,
             session,
@@ -330,6 +343,7 @@ impl Tty {
             gpu_manager,
             primary_node,
             primary_render_node,
+            ignored_nodes,
             devices: HashMap::new(),
             dmabuf_global: None,
             update_output_config_on_resume: false,
@@ -497,6 +511,11 @@ impl Tty {
         debug!("device added: {device_id} {path:?}");
 
         let node = DrmNode::from_dev_id(device_id)?;
+
+        if self.ignored_nodes.contains(&node) {
+            debug!("node is ignored, skipping");
+            return Ok(());
+        }
 
         let open_flags = OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK;
         let fd = self.session.open(path, open_flags)?;
@@ -750,6 +769,7 @@ impl Tty {
         }
 
         let mut device = self.devices.remove(&node).unwrap();
+        let device_fd = device.drm.device_fd().device_fd();
 
         if let Some(lease_state) = &mut device.drm_lease_state {
             lease_state.disable_global::<State>();
@@ -792,9 +812,25 @@ impl Tty {
         }
 
         self.gpu_manager.as_mut().remove_node(&device.render_node);
+        // Trigger re-enumeration in order to remove the device from gpu_manager.
+        let _ = self.gpu_manager.devices();
+
         niri.event_loop.remove(device.token);
 
         self.refresh_ipc_outputs(niri);
+
+        drop(device);
+
+        match TryInto::<OwnedFd>::try_into(device_fd) {
+            Ok(fd) => {
+                if let Err(err) = self.session.close(fd) {
+                    warn!("error closing DRM device fd: {err:?}");
+                }
+            }
+            Err(_) => {
+                error!("unable to close DRM device cleanly: fd has unexpected references");
+            }
+        }
     }
 
     fn connector_connected(
@@ -857,11 +893,23 @@ impl Tty {
         }
         debug!("picking mode: {mode:?}");
 
-        // We only use 8888 RGB formats, so set max bpc to 8 to allow more types of links to run.
-        match set_max_bpc(&device.drm, connector.handle(), 8) {
-            Ok(bpc) => debug!("set max bpc to {bpc}"),
-            Err(err) => debug!("error setting max bpc: {err:?}"),
-        }
+        if let Ok(props) = ConnectorProperties::try_new(&device.drm, connector.handle()) {
+            match reset_hdr(&props) {
+                Ok(()) => (),
+                Err(err) => debug!("error resetting HDR properties: {err:?}"),
+            }
+
+            if !niri.config.borrow().debug.keep_max_bpc_unchanged {
+                // We only use 8888 RGB formats, so set max bpc to 8 to allow more types of links to
+                // run.
+                match set_max_bpc(&props, 8) {
+                    Ok(_bpc) => (),
+                    Err(err) => debug!("error setting max bpc: {err:?}"),
+                }
+            }
+        } else {
+            warn!("failed to get connector properties");
+        };
 
         let mut gamma_props = GammaProps::new(&device.drm, crtc)
             .map_err(|err| debug!("error getting gamma properties: {err:?}"))
@@ -920,6 +968,11 @@ impl Tty {
                 subpixel: connector.subpixel().into(),
                 model: output_name.model.as_deref().unwrap_or("Unknown").to_owned(),
                 make: output_name.make.as_deref().unwrap_or("Unknown").to_owned(),
+                serial_number: output_name
+                    .serial
+                    .as_deref()
+                    .unwrap_or("Unknown")
+                    .to_owned(),
             },
         );
 
@@ -972,7 +1025,7 @@ impl Tty {
             surface,
             None,
             allocator.clone(),
-            GbmFramebufferExporter::new(device.gbm.clone(), Some(device.render_node)),
+            GbmFramebufferExporter::new(device.gbm.clone(), device.render_node.into()),
             SUPPORTED_COLOR_FORMATS,
             // This is only used to pick a good internal format, so it can use the surface's render
             // formats, even though we only ever render on the primary GPU.
@@ -1002,7 +1055,7 @@ impl Tty {
                     surface,
                     None,
                     allocator,
-                    GbmFramebufferExporter::new(device.gbm.clone(), Some(device.render_node)),
+                    GbmFramebufferExporter::new(device.gbm.clone(), device.render_node.into()),
                     SUPPORTED_COLOR_FORMATS,
                     render_formats,
                     device.drm.cursor_size(),
@@ -1374,7 +1427,8 @@ impl Tty {
         span.emit_text(&surface.name.connector);
 
         if !device.drm.is_active() {
-            warn!("device is inactive");
+            // This branch hits any time we try to render while the user had switched to a
+            // different VT, so don't print anything here.
             return rv;
         }
 
@@ -1781,6 +1835,48 @@ impl Tty {
         }
         self.update_output_config_on_resume = false;
 
+        // Update ignored nodes.
+        let mut ignored_nodes = ignored_nodes_from_config(&self.config.borrow());
+        if ignored_nodes.remove(&self.primary_node)
+            || ignored_nodes.remove(&self.primary_render_node)
+        {
+            warn!("ignoring the primary node or render node is not allowed");
+        }
+        if ignored_nodes != self.ignored_nodes {
+            self.ignored_nodes = ignored_nodes;
+
+            let mut device_list = self
+                .udev_dispatcher
+                .as_source_ref()
+                .device_list()
+                .map(|(device_id, path)| (device_id, path.to_owned()))
+                .collect::<HashMap<_, _>>();
+
+            let removed_devices = self
+                .devices
+                .keys()
+                .filter(|node| {
+                    self.ignored_nodes.contains(node) || !device_list.contains_key(&node.dev_id())
+                })
+                .copied()
+                .collect::<Vec<_>>();
+
+            for node in removed_devices {
+                device_list.remove(&node.dev_id());
+                self.device_removed(node.dev_id(), niri);
+            }
+
+            for node in self.devices.keys() {
+                device_list.remove(&node.dev_id());
+            }
+
+            for (device_id, path) in device_list {
+                if let Err(err) = self.device_added(device_id, &path, niri) {
+                    warn!("error adding device {path:?}: {err:?}");
+                }
+            }
+        }
+
         // Figure out if we should disable laptop panels.
         let mut disable_laptop_panels = false;
         if niri.is_lid_closed {
@@ -1815,6 +1911,18 @@ impl Tty {
                     to_disconnect.push((node, crtc));
                     continue;
                 }
+
+                if let Ok(props) = ConnectorProperties::try_new(&device.drm, surface.connector) {
+                    match reset_hdr(&props) {
+                        Ok(()) => (),
+                        Err(err) => debug!(
+                            "output {:?} HDR: error resetting HDR properties: {err:?}",
+                            surface.name.connector
+                        ),
+                    }
+                } else {
+                    warn!("failed to get connector properties");
+                };
 
                 // Check if we need to change the mode.
                 let Some(connector) = device.drm_scanner.connectors().get(&surface.connector)
@@ -2128,10 +2236,7 @@ impl GammaProps {
     }
 }
 
-fn primary_node_from_config(config: &Config) -> Option<(DrmNode, DrmNode)> {
-    let path = config.debug.render_drm_device.as_ref()?;
-    debug!("attempting to use render node from config: {path:?}");
-
+fn primary_node_from_render_node(path: &Path) -> Option<(DrmNode, DrmNode)> {
     match DrmNode::from_path(path) {
         Ok(node) => {
             if node.ty() == NodeType::Render {
@@ -2162,7 +2267,28 @@ fn primary_node_from_config(config: &Config) -> Option<(DrmNode, DrmNode)> {
             warn!("error opening {path:?} as DRM node: {err:?}");
         }
     }
+
     None
+}
+
+fn primary_node_from_config(config: &Config) -> Option<(DrmNode, DrmNode)> {
+    let path = config.debug.render_drm_device.as_ref()?;
+    debug!("attempting to use render node from config: {path:?}");
+
+    primary_node_from_render_node(path)
+}
+
+fn ignored_nodes_from_config(config: &Config) -> HashSet<DrmNode> {
+    let mut disabled_nodes = HashSet::new();
+
+    for path in &config.debug.ignored_drm_devices {
+        if let Some((primary_node, render_node)) = primary_node_from_render_node(path) {
+            disabled_nodes.insert(primary_node);
+            disabled_nodes.insert(render_node);
+        }
+    }
+
+    disabled_nodes
 }
 
 fn surface_dmabuf_feedback(
@@ -2443,39 +2569,91 @@ fn get_edid_info(
     libdisplay_info::info::Info::parse_edid(&data).context("error parsing EDID")
 }
 
-fn set_max_bpc(device: &DrmDevice, connector: connector::Handle, bpc: u64) -> anyhow::Result<u64> {
-    let props = device
-        .get_properties(connector)
-        .context("error getting properties")?;
-    for (prop, value) in props {
-        let info = device
-            .get_property(prop)
-            .context("error getting property")?;
-        if info.name().to_str() != Ok("max bpc") {
-            continue;
+impl<'a> ConnectorProperties<'a> {
+    fn try_new(device: &'a DrmDevice, connector: connector::Handle) -> anyhow::Result<Self> {
+        let prop_vals = device
+            .get_properties(connector)
+            .context("error getting properties")?;
+
+        let mut properties = Vec::new();
+
+        for (prop, value) in prop_vals {
+            let info = device
+                .get_property(prop)
+                .context("error getting property")?;
+
+            properties.push((info, value));
         }
 
-        let property::ValueType::UnsignedRange(min, max) = info.value_type() else {
-            bail!("wrong property type")
-        };
-
-        let bpc = bpc.clamp(min, max);
-
-        let property::Value::UnsignedRange(value) = info.value_type().convert_value(value) else {
-            bail!("wrong property type")
-        };
-        if value == bpc {
-            return Ok(bpc);
-        }
-
-        device
-            .set_property(connector, prop, property::Value::UnsignedRange(bpc).into())
-            .context("error setting property")?;
-
-        return Ok(bpc);
+        Ok(Self {
+            device,
+            connector,
+            properties,
+        })
     }
 
-    Err(anyhow!("couldn't find max bpc property"))
+    fn find(&self, name: &std::ffi::CStr) -> anyhow::Result<&(property::Info, property::RawValue)> {
+        for prop in &self.properties {
+            if prop.0.name() == name {
+                return Ok(prop);
+            }
+        }
+
+        Err(anyhow!("couldn't find property: {name:?}"))
+    }
+}
+
+const DRM_MODE_COLORIMETRY_DEFAULT: u64 = 0;
+
+fn reset_hdr(props: &ConnectorProperties) -> anyhow::Result<()> {
+    let (info, value) = props.find(c"HDR_OUTPUT_METADATA")?;
+    let property::ValueType::Blob = info.value_type() else {
+        bail!("wrong property type")
+    };
+
+    if *value != 0 {
+        props
+            .device
+            .set_property(props.connector, info.handle(), 0)
+            .context("error setting property")?;
+    }
+
+    let (info, value) = props.find(c"Colorspace")?;
+    let property::ValueType::Enum(_) = info.value_type() else {
+        bail!("wrong property type")
+    };
+    if *value != DRM_MODE_COLORIMETRY_DEFAULT {
+        props
+            .device
+            .set_property(props.connector, info.handle(), DRM_MODE_COLORIMETRY_DEFAULT)
+            .context("error setting property")?;
+    }
+
+    Ok(())
+}
+
+fn set_max_bpc(props: &ConnectorProperties, bpc: u64) -> anyhow::Result<u64> {
+    let (info, value) = props.find(c"max bpc")?;
+    let property::ValueType::UnsignedRange(min, max) = info.value_type() else {
+        bail!("wrong property type")
+    };
+
+    let bpc = bpc.clamp(min, max);
+    let property::Value::UnsignedRange(value) = info.value_type().convert_value(*value) else {
+        bail!("wrong property type")
+    };
+
+    if value != bpc {
+        props
+            .device
+            .set_property(
+                props.connector,
+                info.handle(),
+                property::Value::UnsignedRange(bpc).into(),
+            )
+            .context("error setting property")?;
+    }
+    Ok(bpc)
 }
 
 fn is_vrr_capable(device: &DrmDevice, connector: connector::Handle) -> Option<bool> {

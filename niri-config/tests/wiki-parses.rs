@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 struct KdlCodeBlock {
     filename: String,
@@ -56,7 +56,7 @@ fn extract_kdl_from_file(file_contents: &str, filename: &str) -> Vec<KdlCodeBloc
 
 #[test]
 fn wiki_docs_parses() {
-    let wiki_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../wiki");
+    let wiki_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/wiki");
 
     let code_blocks = fs::read_dir(wiki_dir)
         .unwrap()
@@ -84,7 +84,7 @@ fn wiki_docs_parses() {
         must_fail,
     } in code_blocks
     {
-        if let Err(error) = niri_config::Config::parse(&filename, &code) {
+        if let Err(error) = niri_config::Config::parse(Path::new(&filename), &code).config {
             if !must_fail {
                 errors.push(format!(
                     "Error parsing wiki KDL code block at {}:{}: {:?}",
