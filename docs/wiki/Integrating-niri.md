@@ -11,7 +11,7 @@ When this file is present, niri *will not* automatically create a config at `~/.
 
 Keep in mind that we update the default config in new releases, so if you have a custom `/etc/niri/config.kdl`, you likely want to inspect and apply the relevant changes too.
 
-Splitting the niri config file into multiple files, or includes, are not supported yet.
+You can split the niri config file into multiple files using [`include`](./Configuration:-Include.md).
 
 ### Xwayland
 
@@ -51,11 +51,11 @@ This is detailed on the [Important Software](./Important-Software.md) page.
 
 On top of that, you may want to preconfigure some desktop shell components to make the experience less barebones.
 Niri's default config spawns [Waybar](https://github.com/Alexays/Waybar), which is a good starting point, but you may want to consider changing its default configuration to be less of a kitchen sink, and adding the `niri/workspaces` module.
-You will probably also want a desktop background tool ([swaybg](https://github.com/swaywm/swaybg) or [swww](https://github.com/LGFae/swww)), and a nicer screen locker (compared to the default `swaylock`), like [hyprlock](https://github.com/hyprwm/hyprlock/).
+You will probably also want a desktop background tool ([swaybg](https://github.com/swaywm/swaybg) or [awww (which used to be swww)](https://codeberg.org/LGFae/awww/)), and a nicer screen locker (compared to the default `swaylock`), like [hyprlock](https://github.com/hyprwm/hyprlock/).
 
 Alternatively, some desktop environments and shells work with niri, and can give a more cohesive experience in one package:
 
-- [LXQt](https://lxqt-project.org/) officially supports niri, see [their wiki](https://github.com/lxqt/lxqt/wiki/ConfigWaylandSettings#general) for details on setting it up.
+- [LXQt](https://lxqt-project.org/) officially supports niri, see [their wiki](https://lxqt-project.org/wiki/Wayland-Session) for details on setting it up.
 - Many [XFCE](https://www.xfce.org/) components work on Wayland, including niri. See [their wiki](https://wiki.xfce.org/releng/wayland_roadmap#component_specific_status) for details.
 - There are complete desktop shells based on Quickshell that support niri, for example [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell) and [Noctalia](https://github.com/noctalia-dev/noctalia-shell).
 - You can run a [COSMIC](https://system76.com/cosmic/) session with niri using [cosmic-ext-extra-sessions](https://github.com/Drakulix/cosmic-ext-extra-sessions).
