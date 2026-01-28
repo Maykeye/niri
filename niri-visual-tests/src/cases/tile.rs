@@ -119,9 +119,22 @@ impl TestCase for Tile {
             true,
             Rectangle::new(Point::from((-location.x, -location.y)), size.to_logical(1.)),
         );
+<<<<<<< HEAD
         self.tile
             .render(renderer, location, true, None, RenderTarget::Output)
             .map(|elem| Box::new(elem) as _)
             .collect()
+=======
+
+        let mut rv = Vec::new();
+        self.tile.render(
+            renderer,
+            location,
+            true,
+            RenderTarget::Output,
+            &mut |elem| rv.push(Box::new(elem) as _),
+        );
+        rv
+>>>>>>> main
     }
 }
