@@ -2471,9 +2471,9 @@ impl State {
             Action::ForceLidOpen => {
                 self.force_lid_open();
             }
-            Action::LoadConfigFile => {
+            Action::LoadConfigFile(path) => {
                 if let Some(watcher) = &self.niri.config_file_watcher {
-                    watcher.load_config();
+                    watcher.load_config(path);
                 }
             }
             Action::MruConfirm => {
