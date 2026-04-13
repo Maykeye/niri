@@ -1,5 +1,7 @@
 # Todo list
 
+[ ] CLEANUP
+
 ## Niri-mode
 [ ] Fix: right now niri-mode.py can outlive the niri. When it happens, niri-mode scripts starts consuming CPU as crazy. It should quit.
     [ ] Or make KISS workaround with emphasis on stupid: when the second niri-mode starts, it should find existing one and SIGKILL it
