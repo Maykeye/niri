@@ -2,7 +2,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use niri::layout::Options;
-use niri::render_helpers::RenderTarget;
+use niri::render_helpers::xray::XrayPos;
+use niri::render_helpers::{RenderCtx, RenderTarget};
 use niri_config::Color;
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
@@ -119,22 +120,18 @@ impl TestCase for Tile {
             true,
             Rectangle::new(Point::from((-location.x, -location.y)), size.to_logical(1.)),
         );
-<<<<<<< HEAD
-        self.tile
-            .render(renderer, location, true, None, RenderTarget::Output)
-            .map(|elem| Box::new(elem) as _)
-            .collect()
-=======
 
         let mut rv = Vec::new();
-        self.tile.render(
+        let ctx = RenderCtx {
             renderer,
-            location,
-            true,
-            RenderTarget::Output,
-            &mut |elem| rv.push(Box::new(elem) as _),
-        );
+            target: RenderTarget::Output,
+            xray: None,
+        };
+        let xray_pos = XrayPos::new(location, 1.);
+        self.tile
+            .render(ctx, location, xray_pos, true, None, &mut |elem| {
+                rv.push(Box::new(elem) as _)
+            });
         rv
->>>>>>> main
     }
 }
