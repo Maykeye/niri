@@ -2470,7 +2470,7 @@ impl State {
                 self.niri.queued_keypresses.extend(extending);
             }
             Action::ForceLidOpen => {
-                self.force_lid_open();
+                //no longer used
             }
             Action::LoadConfigFile(path) => {
                 if let Some(watcher) = &self.niri.config_file_watcher {
