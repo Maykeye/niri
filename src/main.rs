@@ -80,8 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cli = Cli::parse_from(line.split_whitespace());
             if let Some(subcommand) = cli.subcommand {
                 match subcommand {
-                    Sub::Msg { msg, json } => {
-                        handle_msg(msg, json)?;
+                    Sub::Msg { msg, json, .. } => {
+                        handle_msg(msg, json, false)?;
                     }
                     _ => {
                         // TODO: return error
@@ -132,8 +132,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("config is valid");
                 return Ok(());
             }
-            Sub::Msg { msg, json } => {
-                handle_msg(msg, json)?;
+            Sub::Msg {
+                msg,
+                json,
+                print_request,
+            } => {
+                handle_msg(msg, json, print_request)?;
                 return Ok(());
             }
             Sub::Panic => cause_panic(),
@@ -168,6 +172,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Avoid starting Tracy for the `niri msg` code path since starting/stopping Tracy is a bit
     // slow.
     tracy_client::Client::start();
+
+    // In on-demand mode, we must shut down Tracy manually to terminate the connection cleanly.
+    // Do it from a Drop impl here, so that it runs after the Drop code for all of the state created
+    // below, because some of those Drop impls themselves create Tracy spans.
+    let _shutdown_tracy = ShutdownTracy;
 
     info!("starting version {}", &version());
 
@@ -432,5 +441,15 @@ fn set_default_max_buffer_size(display: &Display<State>, size: usize) {
         }
 
         libc::dlclose(lib);
+    }
+}
+
+struct ShutdownTracy;
+impl Drop for ShutdownTracy {
+    fn drop(&mut self) {
+        #[cfg(feature = "profile-with-tracy-ondemand")]
+        unsafe {
+            tracy_client::sys::___tracy_shutdown_profiler();
+        }
     }
 }
