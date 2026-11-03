@@ -457,20 +457,8 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::Casts(casts)
         }
         Request::KeyboardRecording => {
-            let (tx, rx) = async_channel::bounded(1);
-
-            ctx.event_loop.insert_idle(move |state| {
-                let keypresses = state.niri.queued_keypresses.clone();
-                let _ = tx.send_blocking(keypresses);
-            });
-
-            let result = rx.recv().await;
-            let output = result.map_err(|_| String::from("error getting keyboard recording"))?;
-            let output = output
-                .iter()
-                .map(|(pressed, keycode)| format!("{}{keycode}", if *pressed { '+' } else { '-' }))
-                .collect();
-            Response::KeyboardRecording(KeyboardRecording { keys: output })
+            // TODO: remove me
+            Response::KeyboardRecording(KeyboardRecording { keys: vec![] })
         }
     };
 
@@ -993,6 +981,24 @@ impl State {
             state.apply(event.clone());
             server.send_event(event);
         }
+    }
+
+    pub fn ipc_refresh_touchpad(&mut self) {
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
+
+        let mut state = server.event_stream_state.borrow_mut();
+        let state = &mut state.touchpad;
+        let on = !self.niri.touchpad_disabled_by_toggle;
+
+        if state.on == on {
+            return;
+        }
+
+        let event = Event::TouchpadToggled { on };
+        state.apply(event.clone());
+        server.send_event(event);
     }
 
     pub fn ipc_config_loaded(&mut self, failed: bool) {

@@ -339,6 +339,7 @@ bind_group "overview" {
         Page_Down { focus-window-or-workspace-down; }
         KP_Prior { focus-window-or-workspace-up; }
         KP_Next { focus-window-or-workspace-down; }
+        Delete { spawn "konsole"; }
     }
 }
 
