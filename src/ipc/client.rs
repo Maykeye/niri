@@ -6,7 +6,6 @@ use std::{env, slice};
 use anyhow::{anyhow, bail, Context};
 use niri_config::OutputName;
 use niri_ipc::socket::Socket;
-use niri_ipc::KeyboardRecording;
 use niri_ipc::{
     Action, Cast, CastKind, CastTarget, Event, KeyboardLayouts, LogicalOutput, Mode, Output,
     OutputConfigChanged, Overview, Request, Response, Transform, Window, WindowLayout,
@@ -50,7 +49,6 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
         Msg::RequestError => Request::ReturnError,
         Msg::OverviewState => Request::OverviewState,
         Msg::Casts => Request::Casts,
-        Msg::KeyboardRecording => Request::KeyboardRecording,
         Msg::RawRequest => {
             let mut buf = Vec::new();
             let mut stdin = std::io::stdin().lock();
@@ -550,25 +548,6 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
                 println!("Overview is open.");
             } else {
                 println!("Overview is closed.");
-            }
-        }
-        Msg::KeyboardRecording => {
-            let Response::KeyboardRecording(response) = response else {
-                bail!("unexpected response: expected KeyboardLayouts, got {response:?}");
-            };
-
-            if json {
-                let response =
-                    serde_json::to_string(&response).context("error formatting response")?;
-                println!("{response}");
-                return Ok(());
-            }
-
-            let KeyboardRecording { keys } = response;
-
-            println!("Keyboard recording:");
-            for key in keys.iter() {
-                println!("{key}");
             }
         }
         Msg::Casts => {

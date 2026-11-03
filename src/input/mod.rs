@@ -2528,27 +2528,6 @@ impl State {
             Action::SetKeybindingGroup(group_name) => {
                 self.set_keybinding_group(group_name.as_ref().map(|x| x.as_str()));
             }
-            Action::StartKeyboardRecording => {
-                // TODO: remove (no longer used)
-            }
-            Action::StopKeyboardRecording => {
-                // TODO: remove (no longer used)
-            }
-            Action::PlaybackKeyboardRecording => {
-                // TODO: remove (no longer used)
-            }
-            Action::PlaybackKeyboardRecordingOnce => {
-                // TODO: remove (no longer used)
-            }
-            Action::ResetKeyboardRecording => {
-                // TODO: remove (no longer used)
-            }
-            Action::ExtendKeyboardRecording(_) => {
-                // TODO: remove (no longer used)
-            }
-            Action::ForceLidOpen => {
-                //no longer used
-            }
             Action::LoadConfigFile(path) => {
                 if let Some(watcher) = &self.niri.config_file_watcher {
                     watcher.load_config(path);

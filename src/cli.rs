@@ -104,8 +104,6 @@ pub enum Msg {
     },
     /// Start continuously receiving events from the compositor.
     EventStream,
-    /// Request current keyboard recording
-    KeyboardRecording,
     /// Print the version of the running niri instance.
     Version,
     /// Request an error from the running niri instance.

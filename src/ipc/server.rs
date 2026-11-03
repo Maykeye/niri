@@ -17,8 +17,8 @@ use futures_util::{select_biased, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, Fu
 use niri_config::OutputName;
 use niri_ipc::state::{EventStreamState, EventStreamStatePart as _};
 use niri_ipc::{
-    Action, Event, KeyboardLayouts, KeyboardRecording, OutputConfigChanged, Overview, Reply,
-    Request, Response, Timestamp, WindowLayout, Workspace,
+    Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, Reply, Request, Response,
+    Timestamp, WindowLayout, Workspace,
 };
 use smithay::desktop::layer_map_for_output;
 use smithay::input::pointer::{
@@ -455,10 +455,6 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let state = ctx.event_stream_state.borrow();
             let casts = state.casts.casts.values().cloned().collect();
             Response::Casts(casts)
-        }
-        Request::KeyboardRecording => {
-            // TODO: remove me
-            Response::KeyboardRecording(KeyboardRecording { keys: vec![] })
         }
     };
 

@@ -1,5 +1,4 @@
 # NiRIce/Combined
-
 This branch includes all extra features that I find useful.
 
 ## BRANCH: keyboard_named_binds
@@ -26,9 +25,11 @@ binds {
     Mod+BracketLeft  { set-keybinding-group "column-width"; }
 ```
 
+## BRANCH: forced_alpha
+Allows to render overview in different alpha
 
 ## BRANCH: niri-ipc-stdin
-
+(No more useful)
 This branch adds very special option to the niri `--stdin`.
 
 When `niri --stdin` is called, instead of parsing `argv`,
@@ -46,9 +47,3 @@ will print version and known keyboard layouts.
 Empty lines are ignored.
 First error will abort the execution.
 
-## TODO: readme other branches:
-### forced_alpha
-# BRANCH: force-lid-open
-(removed)
-# keycode-queue
-(almost removed; only cmds remained)

@@ -491,14 +491,7 @@ pub enum Action {
     SetWindowUrgent(u64),
     #[knuffel(skip)]
     UnsetWindowUrgent(u64),
-    StartKeyboardRecording,
-    StopKeyboardRecording,
-    PlaybackKeyboardRecording,
-    ResetKeyboardRecording,
-    ExtendKeyboardRecording(#[knuffel(argument)] String),
-    PlaybackKeyboardRecordingOnce,
     SetKeybindingGroup(#[knuffel(argument)] Option<String>),
-    ForceLidOpen,
     #[knuffel(skip)]
     LoadConfigFile(#[knuffel(argument)] Option<String>),
     #[knuffel(skip)]
@@ -837,15 +830,6 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetWindowUrgent { id } => Self::SetWindowUrgent(id),
             niri_ipc::Action::UnsetWindowUrgent { id } => Self::UnsetWindowUrgent(id),
             niri_ipc::Action::LoadConfigFile { path } => Self::LoadConfigFile(path),
-
-            niri_ipc::Action::StartKeyboardRecording => Self::StartKeyboardRecording,
-            niri_ipc::Action::StopKeyboardRecording => Self::StopKeyboardRecording,
-            niri_ipc::Action::PlaybackKeyboardRecordingOnce => Self::PlaybackKeyboardRecordingOnce,
-            niri_ipc::Action::PlaybackKeyboardRecording => Self::PlaybackKeyboardRecording,
-            niri_ipc::Action::ResetKeyboardRecording => Self::ResetKeyboardRecording,
-            niri_ipc::Action::ExtendKeyboardRecording { keys } => {
-                Self::ExtendKeyboardRecording(keys)
-            }
         }
     }
 }
