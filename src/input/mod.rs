@@ -3928,20 +3928,6 @@ impl State {
                                 self.niri.cancel_mru();
                             }
                         }
-                        /*
-                        <<<<<<< HEAD XXX
-                                            } else if let Some((window, _)) = under.window {
-                                                if let Some(output) = is_overview_open.then_some(under.output).flatten() {
-                                                    let mut workspaces = self.niri.layout.workspaces();
-                                                    if let Some(ws_idx) = workspaces.find_map(|(_, ws_idx, ws)| {
-                                                        ws.windows().any(|w| w.window == window).then_some(ws_idx)
-                                                    }) {
-                                                        drop(workspaces);
-                                                        self.niri.layout.focus_output(&output);
-                                                        self.niri.layout.toggle_overview_to_workspace(ws_idx);
-                                                        self.set_keybinding_group_from_overview_state();
-                        =======
-                                                XXXX*/
                     } else if !tool.is_grabbed() {
                         if under.overview && !mod_down && under.output.is_some() {
                             let (output, pos_within_output) = self.niri.output_under(pos).unwrap();
@@ -4007,32 +3993,7 @@ impl State {
                             // FIXME: granular.
                             self.niri.queue_redraw_all();
                         }
-                        /*XXX <<<<<<< HEAD
-
-                                                self.niri.layout.activate_window(&window);
-
-                                                // FIXME: granular.
-                                                self.niri.queue_redraw_all();
-                                            } else if let Some((output, ws)) = is_overview_open
-                                                .then(|| self.niri.workspace_under(false, pos))
-                                                .flatten()
-                                            {
-                                                let ws_idx = self.niri.layout.find_workspace_by_id(ws.id()).unwrap().0;
-
-                                                self.niri.layout.focus_output(&output);
-                                                self.niri.layout.toggle_overview_to_workspace(ws_idx);
-                                                self.set_keybinding_group_from_overview_state();
-
-                                                // FIXME: granular.
-                                                self.niri.queue_redraw_all();
-                                            } else if let Some(output) = under.output {
-                                                self.niri.layout.focus_output(&output);
-
-                                                // FIXME: granular.
-                                                self.niri.queue_redraw_all();
-                        =======*/
                         self.niri.focus_layer_surface_if_on_demand(under.layer);
-                        // XXX >>>>>>> main
                     }
                 }
 
