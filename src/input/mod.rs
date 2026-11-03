@@ -4969,16 +4969,47 @@ fn find_bind<'a>(
     bindings
         .into_iter()
         .find(|bind| {
+            let bind_trigger = bind.key.trigger;
+            // Check that the bind modifiers match the held modifiers.
+            //
+            // Pass the bind's trigger itself since we'll check the trigger match below.
+            // (Note that this means mod_key is not properly checked when it matches the trigger.)
+            if !bind_matches_trigger(bind, bind_trigger, mod_key, modifiers) {
+                return false;
+            }
+
+            // Binds that consist only of generic modifiers can be hit in any order (trigger key
+            // does not have to be the last). This is consistent with how these types of binds work
+            // elsewhere.
+            //
+            // For example:
+            // - Alt + Shift to switch keyboard layout on Windows
+            // - Ctrl + Alt to show inlay hints in VSCode
+            if bind_trigger.is_generic_modifier() {
+                // Bind trigger matching compositor mod isn't properly checked above.
+                // Check it here.
+                if (bind_trigger == Trigger::CompositorMod
+                    || bind_trigger == Trigger::Modifier(mod_key))
+                    && !modifiers.contains(mod_key.to_modifiers())
+                {
+                    return false;
+                }
+
+                // Check that the key we pressed is one of the bind modifiers.
+                let mut raw_mods = Trigger::Keysym(raw).implied_modifier();
+                if mod_key.matches_keysym(raw) {
+                    raw_mods |= Modifiers::COMPOSITOR;
+                }
+                return !raw_mods.is_empty() && bind.key.modifiers.intersects(raw_mods);
+            }
+
             // Modifier-only binds can be written in several ways:
             // - `Mod { quit; }` - Trigger::CompositorMod
             // - `Super { quit; }` - Trigger::Modifier(_)
             // - `Super_L { quit; }` - Trigger::Keysym(_)
             //
-            // These only matter for keyboard keys and not for mouse or others. So, check them here,
-            // and then pass the bind's trigger itself to the simpler matching function.
-            let bind_trigger = bind.key.trigger;
+            // These only matter for keyboard keys and not for mouse or others. So, check them here.
             trigger_matches_keysym(bind_trigger, raw, mod_key)
-                && bind_matches_trigger(bind, bind_trigger, mod_key, modifiers)
         })
         .cloned()
 }

@@ -1886,6 +1886,14 @@ fn make_dynamic_opened_binds(config: &Config) -> Vec<Bind> {
             continue;
         };
 
+        // The idea with dynamic binds is that their modifiers are ignored
+        // (set to whatever the user is currently holding). This idea does not
+        // make sense with order-independent generic-modifier-only binds.
+        // Effectively, they would trigger on every key press.
+        if bind.key.trigger.is_generic_modifier() {
+            continue;
+        }
+
         let action = match press_action {
             Action::FocusColumnRight
             | Action::FocusColumnRightOrFirst
