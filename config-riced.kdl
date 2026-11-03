@@ -329,8 +329,8 @@ bind_group "overview" {
         // OLD BUILTIN BINDINGS  (toggle-overview doesn't support repeat=false as code does -- sad face 😿)
         Escape { toggle-overview; }
         Return { toggle-overview; }
-        Left { focus-column-left; }
-        Right { focus-column-right; }
+        Right { focus-column-left; }
+        Left { focus-column-right; }
         Up { focus-window-or-workspace-up; }
         Down { focus-window-or-workspace-down; }
 
